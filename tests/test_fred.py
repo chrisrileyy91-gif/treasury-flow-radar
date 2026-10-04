@@ -1,11 +1,10 @@
-from datetime import datetime, timezone
 import json
 import sqlite3
-from urllib.parse import parse_qs, urlsplit
+from datetime import datetime, timezone
 from urllib.error import URLError
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
-
 from treasury_flow_radar.database import database, get_observations
 from treasury_flow_radar.sources.fred import (
     FredClient,
@@ -244,3 +243,4 @@ def test_database_failures_are_not_silently_swallowed(tmp_path):
     db_path.mkdir()
     with pytest.raises(sqlite3.OperationalError):
         ingest_fred(["DGS10"], database_path=db_path, client=client)
+
