@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
@@ -32,6 +33,8 @@ SOURCE_ID = "CFTC"
 SOURCE_NAME = "U.S. Commodity Futures Trading Commission Commitments of Traders"
 SOURCE_URL = "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"
 PRE_URL = f"https://publicreporting.cftc.gov/d/{DATASET_ID}"
+DATASET_TITLE = "Traders in Financial Futures (TFF) - Futures Only"
+REPORT_VARIANT = "tff_futures_only"
 PAGE_SIZE = 5000
 UNIT = "contracts"
 
@@ -83,6 +86,7 @@ CATEGORIES = {
 CODE = "cftc_contract_market_code"
 REPORT_DATE = "report_date_as_yyyy_mm_dd"
 MARKET_NAME = "market_and_exchange_names"
+CONTRACT_NAME = "contract_market_name"
 POSITION_FIELDS = tuple(
     dict.fromkeys(field for _, fields in CATEGORIES.values() for field in fields.values())
 )
@@ -105,6 +109,7 @@ class CftcResponseError(CftcError):
 class Measure:
     participant: str
     metric: str
+    source_field: str
     value: int | None
     raw_value: str
 
@@ -114,6 +119,7 @@ class Record:
     report_date: date
     code: str
     market_name: str
+    contract_name: str | None
     as_of_date: str | None
     metrics: tuple[Measure, ...]
 
@@ -131,7 +137,12 @@ def _date(value: Any) -> date:
     if not isinstance(value, str):
         raise CftcResponseError("report date must be a string")
     try:
-        return date.fromisoformat(value[:10])
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return date.fromisoformat(value)
+        # The CFTC field is a floating timestamp. Keep its source calendar date;
+        # converting an offset-aware timestamp to UTC could shift the report day.
+        parsed = datetime.fromisoformat(value)
+        return parsed.date()
     except ValueError as exc:
         raise CftcResponseError(f"invalid report date {value!r}") from exc
 
@@ -172,6 +183,11 @@ def parse_rows(payload: str | list[Mapping[str, Any]]) -> tuple[Record, ...]:
         name = row.get(MARKET_NAME)
         if not isinstance(name, str) or not name.strip():
             raise CftcResponseError(f"row {index} is missing market name")
+        contract_name = row.get(CONTRACT_NAME)
+        if contract_name is not None and not isinstance(contract_name, str):
+            raise CftcResponseError(f"row {index} has malformed contract market name")
+        if CONTRACT_NAME not in row:
+            raise CftcResponseError(f"row {index} missing source field {CONTRACT_NAME}")
         report_date = _date(row.get(REPORT_DATE))
         asof = row.get("as_of_date_in_form_yy_mm_dd")
         if asof is not None and not isinstance(asof, str):
@@ -187,8 +203,8 @@ def parse_rows(payload: str | list[Mapping[str, Any]]) -> tuple[Record, ...]:
             if field not in row:
                 raise CftcResponseError(f"row {index} missing source field {field}")
             value, raw = _count(row[field], field)
-            measures.append(Measure(category, metric, value, raw))
-        record = Record(report_date, code, name.strip(), asof, tuple(measures))
+            measures.append(Measure(category, metric, field, value, raw))
+        record = Record(report_date, code, name.strip(), contract_name, asof, tuple(measures))
         identity = (code, report_date)
         old = seen.get(identity)
         if old is not None:
@@ -220,11 +236,13 @@ class CftcClient:
 
     def fetch_history(self) -> tuple[Page, ...]:
         pages, offset = [], 0
+        seen: dict[tuple[str, date], Record] = {}
         while True:
             codes = ", ".join(f"'{code}'" for code in sorted(CONTRACTS))
             fields = [
                 "id",
                 MARKET_NAME,
+                CONTRACT_NAME,
                 "as_of_date_in_form_yy_mm_dd",
                 REPORT_DATE,
                 CODE,
@@ -261,7 +279,20 @@ class CftcClient:
                 raise CftcResponseError("response is not valid UTF-8 JSON") from exc
             if not isinstance(rows, list) or len(rows) > self.page_size:
                 raise CftcResponseError("response page is not a valid bounded row array")
-            records = parse_rows(rows)
+            page_records = parse_rows(rows)
+            records = []
+            for record in page_records:
+                identity = (record.code, record.report_date)
+                previous = seen.get(identity)
+                if previous is not None:
+                    if previous != record:
+                        raise CftcResponseError(
+                            "conflicting duplicate across pages "
+                            f"{record.code} on {record.report_date}"
+                        )
+                    continue
+                seen[identity] = record
+                records.append(record)
             retrieved = self.clock()
             if retrieved.tzinfo is None or retrieved.utcoffset() is None:
                 raise ValueError("retrieval clock must be timezone-aware")
@@ -321,7 +352,10 @@ def ingest_cftc(
             metadata={
                 "provider": "CFTC",
                 "report": "TFF futures only",
+                "dataset_title": DATASET_TITLE,
                 "dataset_id": DATASET_ID,
+                "report_variant": REPORT_VARIANT,
+                "options_scope": "futures only; excludes options positions",
                 "dataset_url": PRE_URL,
                 "api_url": API_URL,
                 "authentication": "public; no key required",
@@ -351,8 +385,11 @@ def ingest_cftc(
                     default_unit=UNIT,
                     metadata={
                         "dataset_id": DATASET_ID,
+                        "dataset_title": DATASET_TITLE,
+                        "report_variant": REPORT_VARIANT,
                         "cftc_contract_market_code": record.code,
                         "official_market_and_exchange_name": record.market_name,
+                        "official_contract_market_name": record.contract_name,
                         "report_type": "TFF futures only",
                     },
                 )
@@ -391,6 +428,7 @@ def ingest_cftc(
                         metadata={
                             "contract_market_code": record.code,
                             "market_and_exchange_names": record.market_name,
+                            "contract_market_name": record.contract_name,
                             "report_date": record.report_date.isoformat(),
                             "as_of_date_in_form": record.as_of_date,
                             "participant_category": measure.participant,
@@ -398,6 +436,9 @@ def ingest_cftc(
                                 measure.participant, ("All participants", {})
                             )[0],
                             "metric": measure.metric,
+                            "source_field": measure.source_field,
+                            "source_dataset_id": DATASET_ID,
+                            "report_variant": REPORT_VARIANT,
                             "observation_precision": "calendar_date",
                         },
                     )
