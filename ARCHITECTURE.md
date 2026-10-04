@@ -65,6 +65,26 @@ Observation rows explicitly reference both their provider and provider-scoped se
 
 The current model records observation versions, not every repeated transport-level fetch. Raw record deduplication avoids redundant payload storage; retrieval of an unchanged duplicate does not create a new observation version. If exact auditability of every polling attempt becomes necessary, that can be added as a separate retrieval log without changing observation identity.
 
+## FRED source adapter
+
+The first source adapter is `src/treasury_flow_radar/sources/fred.py`. It owns FRED-specific HTTP requests, JSON validation, missing-value handling, and mapping of only DGS10 and DGS2 into the provider-neutral database API. The command `python -m treasury_flow_radar.sources.fred [DGS10] [DGS2]` ingests an explicitly selected series set (or both by default). No FRED-specific request or parsing logic lives in the database package.
+
+The data path is:
+
+1. The adapter requests the FRED `/fred/series/observations` endpoint with the selected series ID, JSON response format, and ascending observation dates.
+2. It captures the response body as received, selected HTTP response metadata, retrieval time, FRED real-time metadata, and each source value.
+3. It registers the FRED source and provider-scoped series definitions, then stores the complete response in `raw_records`.
+4. Each source calendar date becomes an observation with a numeric rate in percent, the exact FRED value string in `raw_value`, and a foreign-key link to that response. FRED's `.` missing marker yields a NULL numeric value, not zero.
+5. An unchanged date/value is skipped as an already-known observation. A changed value is stored as the next immutable revision, linked to the prior row. The database's duplicate semantics are unchanged.
+
+The observations API requires `FRED_API_KEY`; `TFR_USER_AGENT` is optional, and `TREASURY_FLOW_RADAR_DB` or the CLI's `--database` selects the database path. API keys are read from environment variables and are not written into request provenance. The adapter uses the official FRED Web Services API, not an unauthenticated CSV path.
+
+### FRED timestamp and vintage limitations
+
+FRED's `date` field describes the observation's calendar date. The adapter stores that date as midnight UTC solely as a date anchor and marks `observation_precision=calendar_date`; it is not an assertion that the value was observed or published at midnight. FRED's `realtime_start` and `realtime_end` values describe date-based real-time periods and are kept in observation metadata and in the raw response. They do not establish an exact release instant. Therefore `publication_time` remains NULL for these records. `retrieval_time` records when this application received the response.
+
+If a later FRED response changes a historical value, the adapter can identify the new value and preserve it as a revision, but it does not backfill the exact date/time when FRED first published that change. The as-of query will consequently gate those versions by retrieval time. This is intentionally incomplete rather than inventing publication precision.
+
 ## Data lineage
 
 Every observation should be traceable to its source, source timestamp, observation timestamp, retrieval timestamp, frequency, series/instrument/metric, raw value, and normalized value when applicable. Missing values must remain missing rather than being fabricated.
