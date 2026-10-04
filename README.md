@@ -63,3 +63,24 @@ Repeated ingestion of unchanged observations is idempotent. If FRED changes a va
 ## Project status
 
 FRED DGS10/DGS2 ingestion is the first implemented source path. The other listed providers, further series, calculations, dashboard behavior, and trading signals are not implemented. See [ARCHITECTURE.md](ARCHITECTURE.md) for the schema, provenance flow, and timestamp limitations.
+
+
+## NY Fed Primary Dealer Statistics
+
+The second source adapter ingests one aggregate weekly positioning measure from the official [NY Fed Primary Dealer Statistics](https://www.newyorkfed.org/markets/counterparties/primary-dealers-statistics) API. The selected provider field is `PDPOSGST-TOT`: total primary dealer long positions minus short positions in U.S. Treasury securities excluding TIPS. It is stored as `dealer_net_position_nominal_treasury_ex_tips_sbn2024_pdposgst_tot` for the current structural window. This is an aggregate reported position, not a measure of intent or a trading signal. Transactions and repo series are not ingested in this initial scope.
+
+The adapter requests the official Markets Data API historical time-series JSON for one structural series break and key ID, preserving the complete response in `raw_records`. It parses weekly as-of dates and stores numeric values in source-native millions of U.S. dollars (`million_us_dollars`); it does not multiply them into dollars. NY Fed suppression markers such as `*` remain in `raw_value` with a NULL numeric value. The selected series break is included in the internal series identity because NY Fed notes that data structures change across historical windows.
+
+Install the package, then ingest the current structural window:
+
+```powershell
+python -m pip install -e .
+python -m treasury_flow_radar.sources.nyfed
+python -m treasury_flow_radar.sources.nyfed --database data/treasury_flow_radar.sqlite3
+```
+
+Use `--series-break` to retrieve a different NY Fed structural window and `--key-id` to select its corresponding field. Older windows may use different provider key IDs and definitions; confirm their mapping against that window's official data definitions before ingesting. Repeated unchanged rows are idempotent; changed values become immutable revisions linked to their predecessor.
+
+NY Fed describes the series date as an as-of/reporting date. The site says releases are updated Thursdays at approximately 4:15 p.m. with the previous week's statistics, but the API does not provide exact historical publication instants. Therefore `publication_time` is NULL; the weekly schedule is not substituted for a publication timestamp. `observation_time` is stored as a midnight UTC date anchor with `observation_precision=calendar_date`, and `retrieval_time` records when this application fetched the response.
+
+NY Fed says reports are dealer-submitted and not audited by the Bank, values may be revised, data are suppressed when fewer than three dealers report for a category, and totals may not add due to rounding. Consult the source definitions and their series-break windows when comparing history. The adapter reports measurements only and does not infer manipulation, causation, or directional forecasts.

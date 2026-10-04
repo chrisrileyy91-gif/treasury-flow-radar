@@ -92,3 +92,14 @@ Every observation should be traceable to its source, source timestamp, observati
 Historical reconstruction is essential to answer: **“What did the system actually know at that point in time?”** Preserve publication/retrieval timing and revisions where the source makes them available; do not substitute later knowledge for the view available at the historical point being studied.
 
 External APIs and data formats belong behind source adapters. Provider-specific behavior must not leak into normalization, storage, analysis, or presentation.
+
+
+## NY Fed Primary Dealer Statistics adapter
+
+`src/treasury_flow_radar/sources/nyfed.py` owns requests and parsing for the Federal Reserve Bank of New York Markets Data API. In this stage it selects one aggregate series: provider key ID `PDPOSGST-TOT`, described by the NY Fed catalog as total nominal U.S. Treasury dealer position (long minus short), excluding TIPS. The internal series identity includes the provider structural window (for example, `SBN2024`) so definition changes are not silently folded into one series. Repo, fails, and transaction/activity fields are intentionally outside this first implementation.
+
+The adapter requests `/api/pd/get/{seriesbreak}/timeseries/{keyid}.json`, parses the matching `pd.timeseries` records, and retains the full JSON response in `raw_records`. The source-native numeric values are stored in `million_us_dollars` (millions of U.S. dollars), without a scale conversion. A source marker for suppressed/unavailable values is retained in `raw_value` and represented by a NULL numeric value. Every observation links to the raw payload and records its provider key ID and structural window in metadata.
+
+Run `python -m treasury_flow_radar.sources.nyfed` for the current window, or provide `--series-break` and `--key-id` for another historical window. The NY Fed source page describes data coverage beginning January 28, 1998 and notes that it is divided into time windows because reporting structures changed. Prior windows may have distinct key IDs and definitions; their mappings must be checked against that window's official data definitions. Each window is registered as a separate internal series. Weekly source dates are calendar dates; the adapter anchors them at midnight UTC and marks their precision rather than claiming a time of day.
+
+The source page reports Thursday updates at about 4:15 p.m. for the preceding week, but this schedule is not an exact historical release instant. The adapter therefore stores `publication_time=NULL`; retrieval time is the actual request time. It also documents that data are dealer-submitted and not audited by the NY Fed, may be revised, may be suppressed when fewer than three dealers report, and may not add due to rounding. Revisions are stored using the existing immutable observation model. No NY Fed-specific database tables or interpretation logic are added.

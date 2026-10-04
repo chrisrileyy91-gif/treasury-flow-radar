@@ -1,0 +1,27 @@
+{
+  "pd": {
+    "timeseries": [
+      {
+        "seriesbreak": "SBN2024",
+        "keyid": "PDPOSGST-TOT",
+        "description": "Total - U.S. TREASURY SECURITIES (EXCLUDING TREASURY INFLATION-PROTECTED SECURITIES (TIPS)): DEALER POSITION - LONG minus SHORT",
+        "asofdate": "2026-09-30",
+        "value": "172345.6"
+      },
+      {
+        "seriesbreak": "SBN2024",
+        "keyid": "PDPOSGST-TOT",
+        "description": "Total - U.S. TREASURY SECURITIES (EXCLUDING TREASURY INFLATION-PROTECTED SECURITIES (TIPS)): DEALER POSITION - LONG minus SHORT",
+        "asofdate": "2026-10-07",
+        "value": "*"
+      },
+      {
+        "seriesbreak": "SBN2024",
+        "keyid": "PDTRGS-TOT",
+        "description": "Treasury transactions (not selected)",
+        "asofdate": "2026-10-07",
+        "value": "812345.0"
+      }
+    ]
+  }
+}
