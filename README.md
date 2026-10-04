@@ -23,15 +23,43 @@ A category label does not replace source attribution, uncertainty, or method det
 
 ## Expected initial data sources
 
-These are expected authoritative sources; this initialization does not mean any of them has been implemented:
+These are expected authoritative sources, and implementation status varies:
 
 - Federal Reserve Bank of New York Primary Dealer Statistics
 - CFTC Commitments of Traders
 - CFTC Bank Participation Report
 - U.S. Treasury
-- Federal Reserve / FRED
+- Federal Reserve / FRED — initial DGS10 and DGS2 ingestion is implemented
 - Corporate bond issuance data
+
+## FRED Treasury yields
+
+The FRED adapter currently supports only DGS10 (10-Year Treasury Constant Maturity Rate) and DGS2 (2-Year Treasury Constant Maturity Rate). It requests the official FRED observations API, preserves the complete JSON response in `raw_records`, and links each normalized row to the response that produced it. Values are stored as numeric rates in percent. FRED's `.` missing marker is retained as the raw value and stored with a NULL numeric value, never as zero.
+
+The FRED Web Services API requires a registered API key. Set it in the process environment; the project does not load `.env` files automatically. In PowerShell:
+
+```powershell
+$env:FRED_API_KEY = "<your FRED API key>"
+$env:TREASURY_FLOW_RADAR_DB = "data/treasury_flow_radar.sqlite3"  # optional
+```
+
+Install the package into the active Python environment, then run either one series or both:
+
+```powershell
+python -m pip install -e .
+python -m treasury_flow_radar.sources.fred DGS10
+python -m treasury_flow_radar.sources.fred DGS2
+python -m treasury_flow_radar.sources.fred DGS10 DGS2
+# With no series argument, both supported series are ingested.
+python -m treasury_flow_radar.sources.fred
+```
+
+The database path can also be supplied with `--database PATH`. `FRED_API_KEY` is required; `TFR_USER_AGENT` optionally overrides the request user agent. The checked-in `.env.example` contains variable names only and is not automatically read by the CLI. The official FRED Web Services API requires a key; this adapter does not use an alternate public CSV endpoint.
+
+FRED observation dates are calendar dates, not release timestamps. The adapter stores each date using a midnight UTC anchor to fit the database timestamp field and labels its precision as `calendar_date`; this anchor does not mean the yield was published at midnight. The API's returned real-time date fields are retained as metadata, but `publication_time` remains NULL because the endpoint does not provide an exact historical publication timestamp. `retrieval_time` is captured when the response is received.
+
+Repeated ingestion of unchanged observations is idempotent. If FRED changes a value for an observation date, the adapter records a new immutable database revision linked to its predecessor. No FRED API key or other credential belongs in the repository.
 
 ## Project status
 
-The initial SQLite data foundation now records source and series identities, raw records, observation versions, provenance timestamps, and deterministic as-of retrieval. Live data ingestion, calculations, dashboard behavior, and trading signals are not implemented. See [ARCHITECTURE.md](ARCHITECTURE.md) for schema responsibilities, revision semantics, and timestamp rules.
+FRED DGS10/DGS2 ingestion is the first implemented source path. The other listed providers, further series, calculations, dashboard behavior, and trading signals are not implemented. See [ARCHITECTURE.md](ARCHITECTURE.md) for the schema, provenance flow, and timestamp limitations.
