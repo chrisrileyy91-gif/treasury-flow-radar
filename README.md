@@ -34,4 +34,4 @@ These are expected authoritative sources; this initialization does not mean any 
 
 ## Project status
 
-This repository is at its initialization stage. Data ingestion, normalization rules, calculations, database schema, and dashboard behavior will be developed and reviewed in later stages. See [ARCHITECTURE.md](ARCHITECTURE.md) for the intended system layers and lineage requirements.
+The initial SQLite data foundation now records source and series identities, raw records, observation versions, provenance timestamps, and deterministic as-of retrieval. Live data ingestion, calculations, dashboard behavior, and trading signals are not implemented. See [ARCHITECTURE.md](ARCHITECTURE.md) for schema responsibilities, revision semantics, and timestamp rules.
