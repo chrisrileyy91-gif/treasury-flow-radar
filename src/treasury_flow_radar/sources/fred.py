@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
-from decimal import Decimal, InvalidOperation
 import json
 import math
 import os
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from datetime import date, datetime, time, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -214,6 +215,7 @@ class FredClient:
             with self._opener(request, timeout=self.timeout) as response:
                 status = getattr(response, "status", 200)
                 body = response.read()
+                retrieved_at = self._clock()
                 headers = dict(response.headers.items())
         except HTTPError as exc:
             # Never expose the request URL: it contains the API key.
@@ -229,7 +231,6 @@ class FredClient:
         except UnicodeDecodeError as exc:
             raise FredResponseError("FRED response is not valid UTF-8") from exc
         observations = parse_observations(raw_payload)
-        retrieved_at = self._clock()
         if retrieved_at.tzinfo is None or retrieved_at.utcoffset() is None:
             raise FredConfigurationError("retrieval clock must return a timezone-aware datetime")
         metadata: dict[str, Any] = {
@@ -425,3 +426,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
