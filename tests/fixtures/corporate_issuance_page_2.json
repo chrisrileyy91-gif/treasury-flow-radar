@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "source_record_id": "SYN-DEAL-002-EUR",
+      "issuer_name": "Synthetic European Telecom SA",
+      "issuer_identifier": null,
+      "security_identifier": null,
+      "deal_identifier": null,
+      "tranche_identifier": "EUR-7Y",
+      "principal_amount": "950000000.50",
+      "currency": "EUR",
+      "coupon": "3.125",
+      "yield": null,
+      "spread": null,
+      "maturity_date": "2032/09/30",
+      "pricing_date": "09/23/2025",
+      "settlement_date": "2025-09-30T00:00:00Z",
+      "benchmark_maturity": null,
+      "rating": null,
+      "sector": "Telecommunications",
+      "callable_flag": null,
+      "issuance_type": "New issue",
+      "source_native_security_type": "Fixed Rate Notes",
+      "source_native_term": "7 years",
+      "publication_time": null,
+      "source_native_fields": {"amount_precision": "0.01", "vendor_deal_ref": "UNAVAILABLE"}
+    }
+  ],
+  "meta": {"total-count": "3", "total-pages": "2", "fixture_notice": "Synthetic contract fixture; not a historical offering."}
+}
+

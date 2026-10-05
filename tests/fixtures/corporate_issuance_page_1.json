@@ -1,0 +1,56 @@
+{
+  "data": [
+    {
+      "source_record_id": "SYN-DEAL-001-2Y",
+      "issuer_name": "Synthetic Utilities Holdings",
+      "issuer_identifier": "SYNTH-UTIL-01",
+      "security_identifier": "SYN000001AA1",
+      "deal_identifier": "SYN-DEAL-001",
+      "tranche_identifier": "2Y",
+      "principal_amount": "1,250,000,000.00",
+      "currency": "usd",
+      "coupon": "4.25000",
+      "yield": "4.2910",
+      "spread": "95",
+      "maturity_date": "2030-06-15",
+      "pricing_date": "2025-06-10",
+      "settlement_date": "06/17/2025",
+      "benchmark_maturity": "5-Year Treasury",
+      "rating": "A2/A",
+      "sector": "Utilities",
+      "callable_flag": "No",
+      "issuance_type": "New issue",
+      "source_native_security_type": "Senior unsecured notes",
+      "source_native_term": "5-year",
+      "publication_time": "2025-06-10T18:20:00Z",
+      "source_native_fields": {"spread_basis": "basis_points", "original_amount": "1250000000.00", "green_bond": false}
+    },
+    {
+      "source_record_id": "SYN-DEAL-001-10Y",
+      "issuer_name": "Synthetic Utilities Holdings",
+      "issuer_identifier": "SYNTH-UTIL-01",
+      "security_identifier": "SYN000001AB9",
+      "deal_identifier": "SYN-DEAL-001",
+      "tranche_identifier": "10Y",
+      "principal_amount": "750000000",
+      "currency": "USD",
+      "coupon": "4.75",
+      "yield": "4.803",
+      "spread": "120",
+      "maturity_date": "2035-06-15",
+      "pricing_date": "2025-06-10",
+      "settlement_date": "2025-06-17",
+      "benchmark_maturity": "10-Year Treasury",
+      "rating": "A2/A",
+      "sector": "Utilities",
+      "callable_flag": false,
+      "issuance_type": "New issue",
+      "source_native_security_type": "Senior unsecured notes",
+      "source_native_term": "10-year",
+      "publication_time": "2025-06-10T18:20:00Z",
+      "source_native_fields": {"spread_basis": "basis_points", "green_bond": false}
+    }
+  ],
+  "meta": {"total-count": "3", "total-pages": "2", "fixture_notice": "Synthetic contract fixture; not a historical offering."}
+}
+
