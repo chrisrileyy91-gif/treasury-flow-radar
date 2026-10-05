@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import ClassVar
 from urllib.parse import urlsplit
@@ -176,6 +176,24 @@ def test_repeated_ingestion_is_idempotent(tmp_path):
     with database(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM raw_records").fetchone()[0] == 1
+
+
+def test_range_filter_keeps_full_raw_response_and_only_selected_weekly_rows(tmp_path):
+    path = tmp_path / "nyfed-range.sqlite3"
+    result = ingest_nyfed(
+        database_path=path,
+        client=client_for(fixture_text())[0],
+        observation_start=date(2026, 10, 1),
+        observation_end=date(2026, 10, 8),
+    )
+    assert result.inserted == 1
+    with database(path) as conn:
+        observations = get_observations(conn)
+        assert len(observations) == 1
+        assert observations[0]["observation_time"].startswith("2026-10-07")
+        raw = conn.execute("SELECT payload FROM raw_records").fetchone()[0]
+        assert len(json.loads(raw)["pd"]["timeseries"]) == 3
+        assert "normalization_range" in json.loads(observations[0]["metadata_json"])
 
 
 def test_provider_correction_creates_immutable_revision(tmp_path):

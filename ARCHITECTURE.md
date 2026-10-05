@@ -209,3 +209,14 @@ The pure `compare_events` helper reports mean/median 10Y change from T−1 to T+
 
 
 Event comparison denominator details: T−1-to-T+1 10Y changes determine the mean, median, and percentage rising. Post-event decline is a separate T0-to-T+1 comparison with its own reported sample count; it is NULL when no event has both values. Neither metric is a causal estimate.
+
+
+## Stage 10 — Controlled historical ingestion
+
+Run `python -m treasury_flow_radar.ingest` after installing the project editable. The runner calls the existing FRED, NY Fed, CFTC TFF, and Treasury Fiscal Data ingestion functions; it does not implement alternate provider parsing. The default inclusive date window is today minus 730 days through today. `--start-date`, `--end-date`, repeatable `--source`, and `--database` narrow the operation. Source names are `fred-dgs2`, `fred-dgs10`, `nyfed`, `cftc`, and `treasury-auctions`.
+
+FRED receives `observation_start`/`observation_end` in its official API request. CFTC report dates and Treasury auction dates are constrained in their respective public API query filters before pagination. NY Fed currently returns a full selected `seriesbreak`/key response; that raw response is preserved and normalized rows are limited to the requested date window. No rows are daily-expanded, and the stored NY Fed/CFTC frequencies remain weekly. Older rows already present in SQLite are not deleted when a narrower window is ingested.
+
+Only FRED requires credentials. `FRED_API_KEY` is read from the process environment, never printed, and is not loaded from `.env`; a missing key marks each selected FRED series SKIPPED before any request. NY Fed, CFTC, and Treasury use existing public endpoints. The runner catches provider failures per selected adapter, prints an explicit FAILED result and sanitized error, then continues to other selected providers. Existing adapters fetch/validate before their own SQLite transaction, so a later provider failure does not roll back a completed provider transaction.
+
+The JSON run report distinguishes SUCCESS, SKIPPED, and FAILED; reports inserted/unchanged/missing normalized counts, newly added raw payload count, and cumulative per-source normalized/raw totals. Re-ingestion remains idempotent through the existing adapter revision and raw-payload deduplication contracts. Raw response bodies stay in `raw_records`; normalized facts stay in `observations` and reference a `raw_record_id`. Source observation date, publication timestamp (NULL when the provider omits it), and actual retrieval timestamp remain distinct. No credentials or database contents are committed by this code change.

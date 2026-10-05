@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 from urllib.error import URLError
@@ -129,6 +129,15 @@ def test_multiple_pages_overlap_deduplicates_and_query_is_official():
     assert query["page[number]"] == ["1"] and query["page[size]"] == ["3"]
     assert "cusip" in query["fields"][0] and "announcemt_date" in query["fields"][0]
     assert timeout == 45 and request.get_header("Accept") == "application/json"
+
+
+def test_auction_query_limits_history_to_requested_auction_dates():
+    rows = json.loads(fixture("treasury_fiscaldata_auctions_page_1.json"))["data"]
+    cli, opener = client([envelope(rows, len(rows), 1)])
+    cli.fetch_history(start_date=date(2024, 1, 1), end_date=date(2025, 12, 31))
+    params = parse_qs(urlsplit(opener.requests[0][0].full_url).query)
+    assert "auction_date:gte:2024-01-01" in params["filter"][0]
+    assert "auction_date:lte:2025-12-31" in params["filter"][0]
 
 
 def test_conflicting_duplicate_across_pages_rejected():

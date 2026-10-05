@@ -178,3 +178,30 @@ The event view accepts a user-supplied event identifier, date, type, issuer, pri
 
 
 Event comparison definitions: the mean, median, and percentage rising summarize 10Y change from T−1 to T+1. The percentage post-event decline separately compares T+1 against T0 and reports its own complete-event count; if no T0/T+1 pairs exist, that percentage is NULL.
+
+
+## Populate historical observations
+
+Run the existing official-source adapters through the controlled orchestrator:
+
+```powershell
+python -m pip install -e .
+python -m treasury_flow_radar.ingest
+```
+
+The default range is the latest 730 calendar days through today. Choose a database path or narrower date range as needed:
+
+```powershell
+python -m treasury_flow_radar.ingest --database data/treasury_flow_radar.sqlite3 --start-date 2024-10-05 --end-date 2026-10-05
+python -m treasury_flow_radar.ingest --source nyfed --source cftc
+python -m treasury_flow_radar.ingest --source treasury-auctions
+python -m treasury_flow_radar.ingest --source fred-dgs2 --source fred-dgs10
+```
+
+The runner invokes the existing adapters, which preserve raw responses and normalized observations in the existing database and keep revisions immutable. Re-running an unchanged range is idempotent. Reports include inserted, unchanged, and missing normalized observations, new raw records, and source totals. Each provider is ingested in its own transaction; a failed provider is reported and does not undo successful providers. The command exits nonzero if any selected provider fails.
+
+FRED requires `FRED_API_KEY` in the process environment. The runner never loads `.env` automatically or prints the key. When the key is absent, each selected FRED series is reported as SKIPPED and no request is made. NY Fed, CFTC Socrata, and Treasury Fiscal Data use the already-configured public endpoints and require no key. DNS, network, HTTP, parsing, and persistence errors are reported as FAILED rather than being represented as successful empty data.
+
+FRED, CFTC, and Treasury auction requests are bounded to the requested date range (FRED observation dates, CFTC weekly report dates, and auction dates respectively). The NY Fed time-series endpoint returns its selected series-break response as a whole; the adapter retains that complete raw response and stores only normalized observations inside the requested range. Its reporting remains weekly. A date-range selection does not delete older observations already in the database.
+
+The dashboard reads the same configured SQLite database. After a successful run, reload it to see any newly persisted DGS2/DGS10, dealer-position, CFTC, and auction observations. A missing database or unavailable source remains visibly UNKNOWN/UNAVAILABLE. Raw records contain original provider response payloads; normalized observations point to those records and retain source observation, optional publication, and retrieval times separately.

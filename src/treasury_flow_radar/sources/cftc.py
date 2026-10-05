@@ -234,7 +234,14 @@ class CftcClient:
             "TFR_USER_AGENT", "TreasuryFlowRadar/0.1 (public CFTC data)"
         )
 
-    def fetch_history(self) -> tuple[Page, ...]:
+    def fetch_history(
+        self,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> tuple[Page, ...]:
+        if start_date and end_date and start_date > end_date:
+            raise ValueError("start_date must not be after end_date")
         pages, offset = [], 0
         seen: dict[tuple[str, date], Record] = {}
         while True:
@@ -249,10 +256,16 @@ class CftcClient:
                 "open_interest_all",
                 *POSITION_FIELDS,
             ]
+            filters = [f"{CODE} in ({codes})"]
+            if start_date:
+                filters.append(f"{REPORT_DATE} >= '{start_date.isoformat()}T00:00:00.000'")
+            if end_date:
+                filters.append(f"{REPORT_DATE} <= '{end_date.isoformat()}T23:59:59.999'")
+            where = " AND ".join(filters)
             params = urlencode(
                 {
                     "$select": ",".join(dict.fromkeys(fields)),
-                    "$where": f"{CODE} in ({codes})",
+                    "$where": where,
                     "$order": f"{REPORT_DATE} ASC, {CODE} ASC, id ASC",
                     "$limit": str(self.page_size),
                     "$offset": str(offset),
@@ -307,6 +320,9 @@ class CftcClient:
                         "endpoint": API_URL,
                         "request_parameters": {
                             "contract_codes": sorted(CONTRACTS),
+                            "start_date": start_date.isoformat() if start_date else None,
+                            "end_date": end_date.isoformat() if end_date else None,
+                            "where": where,
                             "limit": self.page_size,
                             "offset": offset,
                         },
@@ -336,10 +352,18 @@ def _key(record: Record, measure: Measure) -> str:
 
 
 def ingest_cftc(
-    *, database_path: str | Path = DEFAULT_DB_PATH, client: CftcClient | None = None
+    *, database_path: str | Path = DEFAULT_DB_PATH, client: CftcClient | None = None,
+    start_date: date | None = None, end_date: date | None = None,
 ) -> dict[str, int]:
     """Fetch history before opening SQLite; persist revisions and raw provenance."""
-    pages = (client or CftcClient()).fetch_history()
+    if start_date and end_date and start_date > end_date:
+        raise ValueError("start_date must not be after end_date")
+    cftc_client = client or CftcClient()
+    pages = (
+        cftc_client.fetch_history()
+        if start_date is None and end_date is None
+        else cftc_client.fetch_history(start_date=start_date, end_date=end_date)
+    )
     initialize_database(database_path)
     inserted = unchanged = missing = 0
     with database(database_path) as conn:

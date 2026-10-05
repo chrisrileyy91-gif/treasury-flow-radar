@@ -257,19 +257,31 @@ class TreasuryAuctionClient:
         self.opener, self.clock, self.page_size = opener, clock, page_size
         self.user_agent = user_agent or "TreasuryFlowRadar/0.1 (public Treasury Fiscal Data)"
 
-    def fetch_history(self) -> tuple[Page, ...]:
+    def fetch_history(
+        self,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> tuple[Page, ...]:
+        if start_date and end_date and start_date > end_date:
+            raise ValueError("start_date must not be after end_date")
         pages: list[Page] = []
         seen: dict[str, Auction] = {}
         expected_count = expected_pages = None
         page_number = 1
-        filters = (
+        filters = [( 
             "security_type:in:(Note,Bond),"
             "security_term:in:(2-Year,5-Year,7-Year,10-Year,20-Year,30-Year),"
             "inflation_index_security:eq:No,floating_rate:eq:No"
-        )
+        )]
+        if start_date:
+            filters.append(f"auction_date:gte:{start_date.isoformat()}")
+        if end_date:
+            filters.append(f"auction_date:lte:{end_date.isoformat()}")
+        filter_expression = ",".join(filters)
         while expected_pages is None or page_number <= expected_pages:
             params = urlencode({
-                "format": "json", "fields": ",".join(FIELDS), "filter": filters,
+                "format": "json", "fields": ",".join(FIELDS), "filter": filter_expression,
                 "sort": "auction_date,cusip,issue_date", "page[number]": str(page_number),
                 "page[size]": str(self.page_size),
             })
@@ -321,8 +333,10 @@ class TreasuryAuctionClient:
                 "dataset_url": DATASET_URL,
                 "endpoint": API_URL,
                 "request_parameters": {
-                    "fields": list(FIELDS), "filter": filters, "sort": "auction_date,cusip,issue_date",
+                    "fields": list(FIELDS), "filter": filter_expression, "sort": "auction_date,cusip,issue_date",
                     "page_size": self.page_size, "page_number": page_number,
+                    "start_date": start_date.isoformat() if start_date else None,
+                    "end_date": end_date.isoformat() if end_date else None,
                 },
                 "total_count": total_count, "total_pages": total_pages, "http_status": status,
                 "response_headers": {k: v for k, v in headers.items()
@@ -347,9 +361,18 @@ def _series(auction: Auction) -> tuple[str, str]:
 def ingest_treasury_auctions(
     *, database_path: str | Path = DEFAULT_DB_PATH,
     client: TreasuryAuctionClient | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> dict[str, int]:
     """Fetch and validate every page before transactional persistence."""
-    pages = (client or TreasuryAuctionClient()).fetch_history()
+    if start_date and end_date and start_date > end_date:
+        raise ValueError("start_date must not be after end_date")
+    auction_client = client or TreasuryAuctionClient()
+    pages = (
+        auction_client.fetch_history()
+        if start_date is None and end_date is None
+        else auction_client.fetch_history(start_date=start_date, end_date=end_date)
+    )
     initialize_database(database_path)
     inserted = unchanged = missing = 0
     with database(database_path) as conn:

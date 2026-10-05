@@ -1,10 +1,11 @@
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, date, datetime
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+
 from treasury_flow_radar.database import database, get_observations
 from treasury_flow_radar.sources.fred import (
     FredClient,
@@ -16,7 +17,6 @@ from treasury_flow_radar.sources.fred import (
     parse_observations,
 )
 
-UTC = timezone.utc
 RETRIEVED = datetime(2026, 10, 8, 12, tzinfo=UTC)
 
 
@@ -177,6 +177,17 @@ def test_identical_ingestion_is_idempotent(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM raw_records").fetchone()[0] == 1
 
 
+def test_fred_client_passes_historical_window_to_official_api():
+    client = fixed_client({"DGS10": response()})
+    client.fetch_series(
+        "DGS10", observation_start=date(2025, 1, 1), observation_end=date(2025, 12, 31)
+    )
+    request, _ = client._opener.requests[0]
+    query = parse_qs(urlsplit(request.full_url).query)
+    assert query["observation_start"] == ["2025-01-01"]
+    assert query["observation_end"] == ["2025-12-31"]
+
+
 def test_changed_provider_value_is_a_new_revision(tmp_path):
     bodies = [
         response(observations=[{"date": "2026-10-05", "value": "4.125"}]),
@@ -243,4 +254,5 @@ def test_database_failures_are_not_silently_swallowed(tmp_path):
     db_path.mkdir()
     with pytest.raises(sqlite3.OperationalError):
         ingest_fred(["DGS10"], database_path=db_path, client=client)
+
 

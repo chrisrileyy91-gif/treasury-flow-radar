@@ -7,7 +7,7 @@ import math
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -195,18 +195,31 @@ class FredClient:
             "TFR_USER_AGENT", "TreasuryFlowRadar/0.1.0"
         )
         self._opener = opener
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
 
-    def fetch_series(self, series_id: str) -> FredSeriesResponse:
+    def fetch_series(
+        self,
+        series_id: str,
+        *,
+        observation_start: date | None = None,
+        observation_end: date | None = None,
+    ) -> FredSeriesResponse:
         if not series_id or not series_id.strip():
             raise ValueError("series_id must not be empty")
-        query = urlencode({
+        if observation_start and observation_end and observation_start > observation_end:
+            raise ValueError("observation_start must not be after observation_end")
+        parameters = {
             "series_id": series_id,
             "api_key": self.api_key,
             "file_type": "json",
             "sort_order": "asc",
             "limit": "100000",
-        })
+        }
+        if observation_start:
+            parameters["observation_start"] = observation_start.isoformat()
+        if observation_end:
+            parameters["observation_end"] = observation_end.isoformat()
+        query = urlencode(parameters)
         request = Request(
             f"{API_URL}?{query}",
             headers={"Accept": "application/json", "User-Agent": self.user_agent},
@@ -240,6 +253,8 @@ class FredClient:
                 "file_type": "json",
                 "sort_order": "asc",
                 "limit": 100000,
+                **({"observation_start": observation_start.isoformat()} if observation_start else {}),
+                **({"observation_end": observation_end.isoformat()} if observation_end else {}),
             },
             "response_headers": {
                 key: value for key, value in headers.items()
@@ -269,6 +284,8 @@ def ingest_fred(
     *,
     database_path: str | Path = DEFAULT_DB_PATH,
     client: FredClient | None = None,
+    observation_start: date | None = None,
+    observation_end: date | None = None,
 ) -> list[IngestionResult]:
     """Fetch requested FRED series, then atomically persist payloads and observations."""
     if not series_ids:
@@ -278,7 +295,18 @@ def ingest_fred(
     for series_id in series_ids:
         _series_definition(series_id)
     fred = client or FredClient()
-    fetched = [fred.fetch_series(series_id) for series_id in series_ids]
+    if observation_start and observation_end and observation_start > observation_end:
+        raise ValueError("observation_start must not be after observation_end")
+    fetched = [
+        fred.fetch_series(series_id)
+        if observation_start is None and observation_end is None
+        else fred.fetch_series(
+            series_id,
+            observation_start=observation_start,
+            observation_end=observation_end,
+        )
+        for series_id in series_ids
+    ]
 
     initialize_database(database_path)
     results: list[IngestionResult] = []
@@ -354,7 +382,7 @@ def ingest_fred(
 
                 # FRED returns a calendar date, not a publication timestamp or time of day.
                 observation_time = datetime.combine(
-                    observation.observation_date, time.min, tzinfo=timezone.utc
+                    observation.observation_date, time.min, tzinfo=UTC
                 )
                 observation_metadata = {
                     "provider": "FRED",
@@ -426,4 +454,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

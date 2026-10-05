@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 from urllib.error import URLError
@@ -225,6 +225,16 @@ def test_public_official_api_query_has_no_credentials():
     assert "contract_market_name" in params["$select"][0]
     assert "api_key" not in params
     assert request.get_header("Accept") == "application/json" and timeout > 0
+
+
+def test_cftc_query_limits_history_without_changing_weekly_observations():
+    client, opener = client_for(fixture_text())
+    page = client.fetch_history(start_date=date(2025, 10, 1), end_date=date(2026, 10, 1))[0]
+    params = parse_qs(urlsplit(opener.requests[0][0].full_url).query)
+    where = params["$where"][0]
+    assert "2025-10-01T00:00:00.000" in where
+    assert "2026-10-01T23:59:59.999" in where
+    assert page.records[0].report_date == date(2026, 9, 29)
 
 
 def test_history_pages_are_ordered_and_complete():

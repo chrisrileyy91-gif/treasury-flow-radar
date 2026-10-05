@@ -249,10 +249,19 @@ def ingest_nyfed(
     client: NyfedClient | None = None,
     series_break: str = DEFAULT_SERIES_BREAK,
     key_id: str = DEFAULT_KEY_ID,
+    observation_start: date | None = None,
+    observation_end: date | None = None,
 ) -> IngestionResult:
     """Fetch and persist selected weekly historical observations idempotently."""
+    if observation_start and observation_end and observation_start > observation_end:
+        raise ValueError("observation_start must not be after observation_end")
     payload = (client or NyfedClient()).fetch_series(
         series_break=series_break, key_id=key_id
+    )
+    selected_observations = tuple(
+        row for row in payload.observations
+        if (observation_start is None or row.observation_date >= observation_start)
+        and (observation_end is None or row.observation_date <= observation_end)
     )
     initialize_database(database_path)
     with database(database_path) as conn:
@@ -302,7 +311,7 @@ def ingest_nyfed(
         )
 
         inserted = unchanged = missing = 0
-        for observation in payload.observations:
+        for observation in selected_observations:
             logical_key = observation.observation_date.isoformat()
             current = get_observations(
                 conn, source_id=source_id, series_id=series_id, logical_key=logical_key
@@ -346,6 +355,10 @@ def ingest_nyfed(
                     "observation_date": logical_key,
                     "observation_precision": "calendar_date",
                     "source_record_metadata": observation.source_metadata,
+                    "normalization_range": {
+                        "start": observation_start.isoformat() if observation_start else None,
+                        "end": observation_end.isoformat() if observation_end else None,
+                    },
                 },
             )
             inserted += 1
