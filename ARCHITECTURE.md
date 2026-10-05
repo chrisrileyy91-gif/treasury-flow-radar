@@ -166,3 +166,28 @@ Page shapes, row types, page totals, required source record IDs, normalized fiel
 When a maturity date is on or after pricing date (or settlement date if pricing date is missing), the adapter records `duration_years_estimate` as elapsed days divided by 365.25. Metadata labels it `estimate` and names the method `maturity_years_proxy_act_365_25`. It is a rough remaining-tenor proxy, not source-supplied duration, Macaulay duration, modified duration, or a price sensitivity calculation. No estimate is written when inputs are absent or inconsistent.
 
 Corporate issuance is a research input, not proof of dealer hedging. “Large corporate issuance may create temporary duration/rate exposure for underwriting dealers, potentially generating Treasury/futures hedging pressure before settlement” remains a hypothesis to test, not a causal conclusion. Fixture tests are offline. A live smoke test against a selected event-level source was not performed because no public structured production source was selected. No Stage 8 analytics or Stage 9 dashboard work is included.
+
+
+## Stage 8 — Descriptive market analytics
+
+The pure, provider-neutral `src/treasury_flow_radar/analytics/descriptive.py` module consumes an observation projection of the existing generic database rows. `Observation.from_mapping` accepts normalized row fields, parses metadata JSON, uses a provider `series_identifier` when supplied (or FRED's `metadata.series_id`), and selects the greatest revision for each source series/logical identity. Callers doing historical reconstruction should provide rows filtered to the desired as-of timestamp using the database layer's existing as-of query; the analytics does not override provenance or publication/retrieval cutoffs.
+
+### Yield and curve units
+
+The FRED adapter stores DGS2 and DGS10 as percentage points, not decimal fractions: e.g. 4.25 means 4.25%. Yield changes are reported both in percentage points and basis points; `basis_points_change = (current_percent - prior_percent) × 100`. Five- and 20-observation changes compare with exactly that many input observations earlier (the prior point is one observation before current). Rolling means use the latest 5/20 yield levels. Rolling volatility is population standard deviation of the latest 5/20 consecutive-observation changes, converted to basis points. No calendar series is generated: consecutive observations may span weekends or market holidays, and NULL values break the relevant lag or rolling window.
+
+The curve function aligns DGS2 and DGS10 by exact observation date, then calculates `10Y − 2Y` in basis points and changes over the same observation lags. It does not carry one series forward to match the other. Curve outputs are CALCULATION records and remain descriptive, with no trading classification.
+
+### Position and price measures
+
+CFTC observations are paired by contract series, report date, participant category, and source metric. Dealer/intermediary, leveraged-fund, and asset-manager net positions are `long − short` in the source's futures contracts. Spreading remains a separate field and is never added to net. Changes are calculated only between supplied report observations; their dates and weekly cadence are retained, with no daily upsampling. If either long or short is missing, net and its change remain NULL.
+
+NY Fed positioning changes use the series' source-native units (currently million U.S. dollars). Percent change is `(current / prior − 1) × 100` only when both values exist and prior is nonzero. Missing observations remain missing and break adjacent changes.
+
+Generic price-series returns use the last supplied price and the supplied price 5 or 20 observations earlier. Daily return uses consecutive supplied prices. The function has no provider dependencies and can consume normalized series identified as HYG, IWM, DXY, Treasury futures prices, or other symbols when those inputs exist. Stage 8 adds no source adapter: the implemented project sources are FRED yields, CFTC weekly futures positions, NY Fed dealer positions, and Treasury auctions. None supplies HYG/IWM/DXY prices or Treasury futures market prices. These identifiers are interface placeholders, and missing price inputs yield no metric.
+
+### Confirmation and evidence
+
+`build_confirmation_vector` classifies each supplied change against explicit configurable absolute thresholds. Defaults are ±0.5 basis points for yield changes and ±0.1% for price returns; a move exactly at the threshold is FLAT. Missing values produce UNKNOWN. Rising yields are worded as “yield rose / Treasury price pressure”; falling yields as “yield fell / Treasury price support.” HYG, IWM, and DXY use neutral rising/falling descriptions. The vector is tagged OBSERVATION because it summarizes simultaneous conditions. Individual computed numeric measures are tagged CALCULATION. The upstream source observations remain FACTs. This layer does not emit MECHANISM, INFERENCE, or HYPOTHESIS claims and cannot convert arithmetic into causal language.
+
+All calculation results are deterministic for a given normalized observation set. Invalid numeric values and conflicting equal revisions are rejected. Divide-by-zero percentage calculations remain unavailable. No forward fill, interpolation, weekend fabrication, market-price source, causal analysis, event study, signal, dashboard, or alerting is added in Stage 8. Offline validation uses synthetic fixtures. A read-only request to the existing public CFTC Socrata JSON endpoint was attempted, but the browser tool reported the URL was inaccessible and returned no data; the endpoint is public in the existing adapter and the failure was not an authentication error. Live-source calculations therefore remain unverified.
