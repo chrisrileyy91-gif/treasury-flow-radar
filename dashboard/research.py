@@ -185,18 +185,27 @@ def build_event_window(event: Event, observations: Iterable[dict[str, Any]]) -> 
 def compare_events(windows: Iterable[list[dict[str, Any]]], *, minimum_sample: int = 5) -> dict[str, Any]:
     """Summarize observed event outcomes; no significance test or causal estimate."""
     outcomes = []
+    post_event_changes = []
     for window in windows:
         pre = next((r["yield_10y"] for r in window if r["offset"] == -1), None)
+        event_level = next((r["yield_10y"] for r in window if r["offset"] == 0), None)
         post = next((r["yield_10y"] for r in window if r["offset"] == 1), None)
         if pre is not None and post is not None:
             outcomes.append((post - pre) * 100)
+        if event_level is not None and post is not None:
+            post_event_changes.append((post - event_level) * 100)
     if len(outcomes) < minimum_sample:
         return {"status": "INSUFFICIENT SAMPLE", "n": len(outcomes), "mean_bps": None,
-                "median_bps": None, "pct_rising": None, "pct_post_event_decline": None,
+                "median_bps": None, "pct_rising": None, "post_event_n": len(post_event_changes),
+                "pct_post_event_decline": None,
                 "outcomes_bps": outcomes}
     return {"status": "DESCRIPTIVE SUMMARY", "n": len(outcomes),
             "mean_bps": fmean(outcomes), "median_bps": median(outcomes),
             "pct_rising": 100 * sum(v > 0 for v in outcomes) / len(outcomes),
-            "pct_post_event_decline": 100 * sum(v < 0 for v in outcomes) / len(outcomes),
+            "post_event_n": len(post_event_changes),
+            "pct_post_event_decline": (
+                100 * sum(v < 0 for v in post_event_changes) / len(post_event_changes)
+                if post_event_changes else None
+            ),
             "outcomes_bps": outcomes}
 

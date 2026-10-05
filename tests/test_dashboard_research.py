@@ -171,19 +171,22 @@ def test_weekly_cftc_only_attaches_on_exact_report_date():
 
 
 def test_event_comparison_reports_insufficient_sample_and_descriptive_stats():
-    window = [{"offset": -1, "yield_10y": 4.0}, {"offset": 1, "yield_10y": 4.1}]
+    window = [{"offset": -1, "yield_10y": 4.0}, {"offset": 0, "yield_10y": 4.1}, {"offset": 1, "yield_10y": 4.2}]
     insufficient = compare_events([window], minimum_sample=2)
     assert insufficient["status"] == "INSUFFICIENT SAMPLE"
     assert insufficient["mean_bps"] is None
-    windows = [[{"offset": -1, "yield_10y": 4.0}, {"offset": 1, "yield_10y": 4 + delta / 100}]
-               for delta in (1, -1, 2, 0, -2)]
+    windows = [[{"offset": -1, "yield_10y": 4.0},
+                {"offset": 0, "yield_10y": 4 + delta / 100},
+                {"offset": 1, "yield_10y": 4 + post_delta / 100}]
+               for delta, post_delta in ((0, -1), (-1, 1), (0, 2), (0, 0), (-2, -2))]
     result = compare_events(windows, minimum_sample=5)
     assert result["status"] == "DESCRIPTIVE SUMMARY"
     assert result["n"] == 5
     assert result["mean_bps"] == pytest.approx(0)
     assert result["median_bps"] == pytest.approx(0)
     assert result["pct_rising"] == pytest.approx(40)
-    assert result["pct_post_event_decline"] == pytest.approx(40)
+    assert result["pct_post_event_decline"] == pytest.approx(20)
+    assert result["post_event_n"] == 5
 
 
 def test_event_interface_marks_user_supplied_event_unverified():
