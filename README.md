@@ -155,3 +155,23 @@ The existing source adapters provide FRED DGS2/DGS10 yields, CFTC Treasury futur
 A market-confirmation vector labels supplied concurrent moves RISING, FALLING, FLAT, or UNKNOWN. Its configurable defaults classify yield moves within ±0.5 bp and price returns within ±0.1% as FLAT. Rising yield is described as yield rose / Treasury price pressure; falling yield as yield fell / Treasury price support. The vector is an OBSERVATION of co-movement, not a signal or causal conclusion. Numeric analytics are CALCULATION outputs. A calculation cannot establish a MECHANISM, INFERENCE, or HYPOTHESIS by itself. Corporate issuance remains a research input, not proof of dealer hedging.
 
 Offline tests use synthetic observations. A read-only smoke request to the existing public CFTC Socrata JSON endpoint was attempted, but the browser tool reported the URL was inaccessible and returned no data; no authentication was requested. See [ARCHITECTURE.md](ARCHITECTURE.md) for calculation and missing-data details.
+
+
+## Local research dashboard and event studies (Stage 9)
+
+Install the package and start the local, dependency-free dashboard:
+
+```powershell
+python -m pip install -e .
+python -m dashboard.app --database data/treasury_flow_radar.sqlite3
+```
+
+Open http://127.0.0.1:8765. Pass `--host` or `--port` to change the local listener. The dashboard reads the existing SQLite database in read-only mode. If the file or schema is absent, it starts with UNKNOWN/UNAVAILABLE states and does not create or modify a database.
+
+The page contains Treasury Market, Dealer Positioning, Futures Positioning, Treasury Supply, Corporate Issuance, Market Confirmation, Evidence / System Read, Data Freshness / Provenance, and Event Study panels. Corporate issuance is explicitly unavailable as a production event-level feed. Offline synthetic fixtures are used by tests only; they are never read as dashboard production records. HYG, IWM, DXY, and Treasury-futures market confirmation appears only when normalized values already exist.
+
+Every observation retains source, series, observation date, publication time, retrieval time, frequency, freshness, unit, and raw-record reference. Freshness is a dashboard display rule based on retrieval age: daily up to 5 days, weekly up to 14 days, monthly up to 45 days; unknown frequency/timestamp yields UNKNOWN. These thresholds do not alter source data.
+
+The evidence taxonomy distinguishes FACT (reported source value), CALCULATION (reproducible arithmetic), OBSERVATION (co-movement description), MECHANISM (possible process), INFERENCE (interpretation beyond measurement), and HYPOTHESIS (proposed explanation requiring further testing). The current System Read is INSUFFICIENT EVIDENCE; no confidence scores, trading directions, causal claims, or forecasts are produced.
+
+The event view accepts a user-supplied event identifier, date, type, issuer, pricing/settlement dates, size/unit, and notes. Such an event is marked USER-SUPPLIED — UNVERIFIED and is not stored as a production observation. T−5 to T+5 offsets refer to the preceding/following available Treasury yield observation dates; they do not invent calendar-day or market observations. T0 is the exact supplied event date; absent source values remain UNKNOWN. Changes are shown relative to the actual T−1 observation when available. NY Fed, CFTC, auction, and normalized market-price inputs are attached only on their exact observed dates, so weekly positioning is never upsampled. Multiple-event descriptive summaries require at least five events with both T−1 and T+1 10Y yields; smaller samples return INSUFFICIENT SAMPLE. No significance test or causal estimate is implemented.
