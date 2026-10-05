@@ -1,8 +1,9 @@
 import json
 from datetime import UTC, date, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import ClassVar
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -232,6 +233,7 @@ def test_cftc_query_limits_history_without_changing_weekly_observations():
     page = client.fetch_history(start_date=date(2025, 10, 1), end_date=date(2026, 10, 1))[0]
     params = parse_qs(urlsplit(opener.requests[0][0].full_url).query)
     where = params["$where"][0]
+    assert "cftc_contract_market_code in ('020601', '042601', '043602', '043607', '044601')" in where
     assert "2025-10-01T00:00:00.000" in where
     assert "2026-10-01T23:59:59.999" in where
     assert page.records[0].report_date == date(2026, 9, 29)
@@ -352,6 +354,36 @@ def test_http_failure_is_explicit():
     client, _ = client_for([URLError("offline")])
     with pytest.raises(CftcRequestError, match="request failed"):
         client.fetch_history()
+
+
+def test_http_400_keeps_socrata_query_diagnostic():
+    error_body = json.dumps(
+        {
+            "code": "soql.analyzer.typechecker.type-mismatch",
+            "message": "Rejected CFTC query",
+            "status": 400,
+            "data": {"expected": ["text"]},
+            "source": {"position": {"row": 1, "column": 9}},
+        }
+    ).encode()
+    error = HTTPError(
+        "https://publicreporting.cftc.gov/resource/gpe5-46if.json",
+        400,
+        "Bad Request",
+        {},
+        BytesIO(error_body),
+    )
+    client, _ = client_for([error])
+
+    with pytest.raises(CftcRequestError) as exc_info:
+        client.fetch_history(start_date=date(2025, 10, 1), end_date=date(2026, 10, 1))
+
+    message = str(exc_info.value)
+    assert "HTTP 400" in message
+    assert "soql.analyzer.typechecker.type-mismatch" in message
+    assert "Rejected CFTC query" in message
+    assert '"column":9' in message
+    assert len(message) < 1200
 
 
 def test_participant_definitions_and_spreading_scope():

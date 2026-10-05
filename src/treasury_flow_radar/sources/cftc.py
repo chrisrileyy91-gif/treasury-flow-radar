@@ -216,6 +216,24 @@ def parse_rows(payload: str | list[Mapping[str, Any]]) -> tuple[Record, ...]:
     return tuple(result)
 
 
+def _http_error_message(status: int, body: bytes) -> str:
+    """Keep Socrata's bounded error detail so malformed SoQL can be diagnosed."""
+    detail = body.decode("utf-8", errors="replace").strip()
+    if detail:
+        try:
+            parsed = json.loads(detail)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(parsed, Mapping):
+                fields = ("code", "message", "data", "source")
+                parsed = {key: parsed[key] for key in fields if key in parsed}
+                detail = json.dumps(parsed, ensure_ascii=True, separators=(",", ":"))
+        detail = " ".join(detail.split())[:1000]
+        return f"CFTC API returned HTTP {status}: {detail}"
+    return f"CFTC API returned HTTP {status}"
+
+
 class CftcClient:
     """Unauthenticated injectable client for CFTC's public Socrata API."""
 
@@ -280,11 +298,15 @@ class CftcClient:
                     status, body = getattr(response, "status", 200), response.read()
                     headers = dict(response.headers.items())
             except HTTPError as exc:
-                raise CftcRequestError(f"CFTC API returned HTTP {exc.code}") from None
+                try:
+                    error_body = exc.read(4096)
+                except OSError:
+                    error_body = b""
+                raise CftcRequestError(_http_error_message(exc.code, error_body)) from None
             except (URLError, OSError, TimeoutError) as exc:
                 raise CftcRequestError(f"CFTC API request failed: {exc}") from exc
             if status < 200 or status >= 300:
-                raise CftcRequestError(f"CFTC API returned HTTP {status}")
+                raise CftcRequestError(_http_error_message(status, body[:4096]))
             try:
                 raw = body.decode("utf-8")
                 rows = json.loads(raw)
