@@ -18,6 +18,7 @@ from treasury_flow_radar.analytics.descriptive import (
     positioning_metrics,
     yield_metrics,
 )
+from treasury_flow_radar.analytics.research import build_research_report, large_yield_moves
 
 __all__ = [
     "ConfirmationThresholds",
@@ -31,7 +32,9 @@ __all__ = [
     "PriceReturns",
     "YieldMetrics",
     "build_confirmation_vector",
+    "build_research_report",
     "curve_metrics",
+    "large_yield_moves",
     "level_changes",
     "market_price_returns",
     "positioning_metrics",

@@ -207,3 +207,20 @@ FRED requires `FRED_API_KEY` in the process environment. The runner never loads 
 FRED, CFTC, and Treasury auction requests are bounded to the requested date range (FRED observation dates, CFTC weekly report dates, and auction dates respectively). The NY Fed time-series endpoint returns its selected series-break response as a whole; the adapter retains that complete raw response and stores only normalized observations inside the requested range. Its reporting remains weekly. A date-range selection does not delete older observations already in the database.
 
 The dashboard reads the same configured SQLite database. After a successful run, reload it to see any newly persisted DGS2/DGS10, dealer-position, CFTC, and auction observations. A missing database or unavailable source remains visibly UNKNOWN/UNAVAILABLE. Raw records contain original provider response payloads; normalized observations point to those records and retain source observation, optional publication, and retrieval times separately.
+
+
+## Descriptive research analytics
+
+The reusable analytics API in `treasury_flow_radar.analytics` calculates DGS2/DGS10 changes in percentage points and basis points, 5- and 10-observation changes, supported rolling volatility, exact-date 10Y-minus-2Y spreads, and configurable large DGS10 move observations (default absolute threshold: 5 bp). A change is calculated only across actual supplied observations; missing dates are not synthesized. Spreads require both yield series on the same observation date.
+
+The report joins a detected yield event to the latest NY Fed dealer observation and CFTC report dated on or before the event. It includes each source's actual observation/report date, dealer change from the previous reported observation, CFTC long/short/spreading and net positions, and the CFTC report lag. Weekly NY Fed and CFTC observations remain weekly; the report never forward-fills them as daily data. Treasury auction rows are matched within a configurable calendar-day window (default three days), and auction dates stay distinct from yield-event dates. Source URLs, observation IDs, raw-record IDs, and retrieval/publication timestamps are included where available. NY Fed/CFTC exact historical publication times are not supplied; observation-date alignment does not assert that a weekly value had been published by the event date.
+
+Every report measurement is labeled FACT, CALCULATION, or OBSERVATION as appropriate. MECHANISM, INFERENCE, and HYPOTHESIS remain distinct evidence categories and are not generated as conclusions from co-occurrence. Timing and alignment do not establish causation, intent, or manipulation. The analytics are a research/measurement tool, not a trading system.
+
+Generate machine-readable JSON with:
+
+```powershell
+python -m treasury_flow_radar.analytics.report --database data/treasury_flow_radar.sqlite3 --start-date 2025-01-01 --end-date 2025-12-31
+```
+
+The report opens the configured SQLite file in read-only mode and does not modify source observations. Use `--threshold-bps` and `--auction-window-days` to configure event and auction matching windows.

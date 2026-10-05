@@ -90,6 +90,7 @@ class YieldMetrics:
     daily_change_percentage_points: float | None
     daily_change_bps: float | None
     change_5_observations_bps: float | None
+    change_10_observations_bps: float | None
     change_20_observations_bps: float | None
     rolling_mean_5_percent: float | None
     rolling_mean_20_percent: float | None
@@ -101,6 +102,7 @@ class YieldMetrics:
 @dataclass(frozen=True)
 class CurveMetrics:
     observation_time: date
+    spread_10y_minus_2y_percentage_points: float | None
     spread_10y_minus_2y_bps: float | None
     daily_change_bps: float | None
     change_5_observations_bps: float | None
@@ -267,6 +269,7 @@ def yield_metrics(
             daily_pp[i],
             daily_bps[i],
             _lag_change(vals, i, 5, scale=100),
+            _lag_change(vals, i, 10, scale=100),
             _lag_change(vals, i, 20, scale=100),
             _window_mean(vals, i, 5),
             _window_mean(vals, i, 20),
@@ -289,9 +292,11 @@ def curve_metrics(
     ten = {day: val for day, val, _ in _series_values(obs, ten_year_series)}
     dates = sorted(set(two) & set(ten))
     spreads = [None if two[d] is None or ten[d] is None else (ten[d] - two[d]) * 100 for d in dates]
+    spreads_pp = [None if two[d] is None or ten[d] is None else ten[d] - two[d] for d in dates]
     return [
         CurveMetrics(
             d,
+            spreads_pp[i],
             spread,
             _lag_change(spreads, i, 1),
             _lag_change(spreads, i, 5),
