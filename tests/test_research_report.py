@@ -96,13 +96,14 @@ def _context_rows():
                          value, logical=f"2024-12-31|{participant}|{metric}", unit="contracts",
                          freq="weekly", metadata={"metric": metric,
                          "participant_category": participant, "reporting_frequency": "weekly"}))
-    auction_base = {"auction_date": "2025-01-02", "security_type": "Note",
+    auction_base = {"dates": {"auction_date": "2025-01-02"}, "security_type": "Note",
                     "security_term": "10-Year", "cusip": "TEST12345",
                     "source_identifier": "TEST12345|2025-01-02|2025-01-15"}
-    for field, value in [("offering_amount", 42000), ("total_accepted", 41000),
+    for field, value in [("offering_amt", 42000), ("total_accepted", 41000),
                          ("bid_to_cover_ratio", 2.5), ("high_yield", 4.3)]:
         rows.append(_row("U.S. Treasury Fiscal Data", "treasury_auction_note_10_year",
-                         "2025-01-02", value, unit="USD_thousands",
+                         "2025-01-02", value, unit=("ratio" if field == "bid_to_cover_ratio"
+                         else "percent" if field == "high_yield" else "thousand_us_dollars"),
                          logical=f"auction|{field}", metadata={**auction_base, "source_field": field}))
     return rows
 
@@ -130,6 +131,8 @@ def test_event_context_respects_weekly_dates_cftc_lag_and_auction_window():
     assert auction["accepted_amount"] == 41000
     assert auction["bid_to_cover"] == 2.5
     assert auction["yield_or_rate"] == 4.3
+    assert auction["offering_amount_unit"] == "thousand_us_dollars"
+    assert auction["yield_or_rate_field"] == "high_yield"
     assert event["event"]["evidence_type"] == EvidenceType.OBSERVATION
     assert report["method"]["weekly_series"].startswith("aligned to latest")
 

@@ -292,7 +292,13 @@ def _auction_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         item = records[auction_id]
         if field:
             item[field] = row.get("value_numeric")
-        for key in ("auction_date", "security_type", "security_term", "cusip", "reopening"):
+            item[f"{field}_unit"] = row.get("unit")
+        dates = meta.get("dates") or {}
+        if dates.get("auction_date"):
+            item["auction_date"] = dates["auction_date"]
+        elif row.get("observation_time"):
+            item["auction_date"] = str(row["observation_time"])[:10]
+        for key in ("security_type", "security_term", "cusip", "reopening"):
             if meta.get(key) is not None:
                 item[key] = meta[key]
         provenance[auction_id] = {
@@ -304,18 +310,20 @@ def _auction_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for key, item in records.items():
         if not item.get("auction_date"):
             continue
+        rate_field = next((name for name in ("high_yield", "high_investment_rate",
+                           "high_discnt_rate", "int_rate") if item.get(name) is not None), None)
         result.append({
             "auction_date": item["auction_date"],
             "security_type": item.get("security_type"),
             "security_term": item.get("security_term"),
-            "offering_amount": item.get("offering_amount"),
-            "offering_amount_unit": "USD_thousands",
+            "offering_amount": item.get("offering_amt"),
+            "offering_amount_unit": item.get("offering_amt_unit") or "thousand_us_dollars",
             "accepted_amount": item.get("total_accepted"),
-            "accepted_amount_unit": "USD_thousands",
+            "accepted_amount_unit": item.get("total_accepted_unit") or "thousand_us_dollars",
             "bid_to_cover": item.get("bid_to_cover_ratio"),
-            "yield_or_rate": item.get("high_yield", item.get("high_investment_rate",
-                                      item.get("high_discnt_rate", item.get("int_rate")))),
-            "yield_or_rate_unit": "Percent",
+            "yield_or_rate": item.get(rate_field) if rate_field else None,
+            "yield_or_rate_field": rate_field,
+            "yield_or_rate_unit": item.get(f"{rate_field}_unit") if rate_field else None,
             "cusip": item.get("cusip"),
             "provenance": provenance.get(key),
             "evidence_type": EvidenceType.FACT.value,
