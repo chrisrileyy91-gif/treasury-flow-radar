@@ -88,7 +88,7 @@ NY Fed says reports are dealer-submitted and not audited by the Bank, values may
 
 ## CFTC Treasury futures positioning
 
-The third source adapter ingests the official CFTC [Traders in Financial Futures (TFF), Futures Only](https://publicreporting.cftc.gov/d/gpe5-46if) dataset through its public [Socrata JSON API](https://publicreporting.cftc.gov/resource/gpe5-46if.json). The dataset is public and does not require an API key. It includes historical weekly futures-only reports; the adapter filters to the five CFTC contract market codes below and requests source-native counts.
+The third source adapter ingests the official CFTC [Traders in Financial Futures (TFF), Futures Only](https://publicreportinghub.cftc.gov/d/gpe5-46if) dataset through its public [Socrata JSON API](https://publicreportinghub.cftc.gov/resource/gpe5-46if.json). The dataset is public and does not require an API key. It includes historical weekly futures-only reports; the adapter filters to the five CFTC contract market codes below and requests source-native counts.
 
 | Treasury futures contract | CFTC contract market code | Internal series |
 | --- | --- | --- |
@@ -99,6 +99,8 @@ The third source adapter ingests the official CFTC [Traders in Financial Futures
 | U.S. Treasury Bond (30-Year) | `020601` | `tff_futures_only_ust_30_year_bond_020601` |
 
 The contract market code is the stable provider key; CFTC's market-and-exchange description and separate `contract_market_name` are retained in observation metadata when supplied. Matching uses the exact CFTC code, never a display-name substring. The series model creates one provider-scoped series per contract. Within each series, an observation's logical key combines report date, participant category, and metric. This keeps the existing generic schema queryable without making a separate series for every category and field.
+
+The current CFTC Data Hub schema identifies `report_date_as_yyyy_mm_dd` as the report-date field and does not expose `as_of_date_in_form_yy_mm_dd`. The adapter now selects and parses the published report date only; it does not substitute another date field. `report_date` is preserved as the source calendar date and used as the UTC midnight observation anchor, while exact publication time remains unknown and retrieval time is captured separately.
 
 For each report, the adapter preserves open interest and long, short, and (where published) spreading positions for Dealer/Intermediary, Asset Manager/Institutional, Leveraged Funds, Other Reportables, and Nonreportable. The CFTC TFF dataset does not publish nonreportable spreading positions; those observations are absent, not zero. The source facts remain separate: the adapter does not calculate net positions.
 
@@ -112,7 +114,7 @@ python -m treasury_flow_radar.sources.cftc --database data/treasury_flow_radar.s
 
 Values remain in source-native futures contracts (`contracts`). They are not converted to dollars or duration, and a contract count is not equivalent to Treasury notional exposure. CFTC report dates refer to the prior Tuesday's close; reports are usually released Friday at 3:30 p.m. Eastern, with holiday delays. The API records do not provide an exact publication timestamp per row, so `publication_time` stays NULL. The adapter stores the report calendar date separately from actual retrieval time.
 
-The CFTC classifies trader positions into aggregate categories, not named firms or strategies. Stage 5 leaves weekly changes, percent-of-open-interest fields, trader counts, and concentration measures in the preserved raw page payload; it normalizes only open interest and the requested position counts. The dataset does not publish nonreportable spreading. TFF is a futures-only report and excludes options. CFTC reports cover markets meeting its reporting criteria; positions and classifications may be revised. This is positioning data, not a directional trading signal. A long or short category does not, by itself, predict Treasury yields.
+The CFTC classifies trader positions into aggregate categories, not named firms or strategies. The selected raw page payload also retains the current-schema fields `change_in_open_interest_all`, `change_in_dealer_long_all`, `change_in_dealer_short_all`, and `change_in_dealer_spread_all`; these source-reported weekly changes are distinct from changes calculated across successive observations. Percent-of-open-interest fields, trader counts, and concentration measures are outside the selected request and normalized scope. The adapter normalizes open interest and the requested position counts. The dataset does not publish nonreportable spreading. TFF is a futures-only report and excludes options. CFTC reports cover markets meeting its reporting criteria; positions and classifications may be revised. This is positioning data, not a directional trading signal. A long or short category does not, by itself, predict Treasury yields.
 
 ## Treasury auction and supply ingestion (Stage 6)
 
@@ -154,7 +156,7 @@ The existing source adapters provide FRED DGS2/DGS10 yields, CFTC Treasury futur
 
 A market-confirmation vector labels supplied concurrent moves RISING, FALLING, FLAT, or UNKNOWN. Its configurable defaults classify yield moves within ±0.5 bp and price returns within ±0.1% as FLAT. Rising yield is described as yield rose / Treasury price pressure; falling yield as yield fell / Treasury price support. The vector is an OBSERVATION of co-movement, not a signal or causal conclusion. Numeric analytics are CALCULATION outputs. A calculation cannot establish a MECHANISM, INFERENCE, or HYPOTHESIS by itself. Corporate issuance remains a research input, not proof of dealer hedging.
 
-Offline tests use synthetic observations. A read-only smoke request to the existing public CFTC Socrata JSON endpoint was attempted, but the browser tool reported the URL was inaccessible and returned no data; no authentication was requested. See [ARCHITECTURE.md](ARCHITECTURE.md) for calculation and missing-data details.
+A Windows production request reached the official CFTC Data Hub but failed with HTTP 400 because the adapter selected the removed `as_of_date_in_form_yy_mm_dd` field. The current-schema adapter removes that field; live verification from this Codex runtime remains pending because its DNS cannot resolve the CFTC host. Offline tests use fixtures only. See [ARCHITECTURE.md](ARCHITECTURE.md) for calculation and missing-data details.
 
 
 ## Local research dashboard and event studies (Stage 9)

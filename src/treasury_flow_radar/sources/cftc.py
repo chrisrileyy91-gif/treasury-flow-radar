@@ -28,11 +28,11 @@ from treasury_flow_radar.database import (
 )
 
 DATASET_ID = "gpe5-46if"
-API_URL = f"https://publicreporting.cftc.gov/resource/{DATASET_ID}.json"
+API_URL = f"https://publicreportinghub.cftc.gov/resource/{DATASET_ID}.json"
 SOURCE_ID = "CFTC"
 SOURCE_NAME = "U.S. Commodity Futures Trading Commission Commitments of Traders"
 SOURCE_URL = "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"
-PRE_URL = f"https://publicreporting.cftc.gov/d/{DATASET_ID}"
+PRE_URL = f"https://publicreportinghub.cftc.gov/d/{DATASET_ID}"
 DATASET_TITLE = "Traders in Financial Futures (TFF) - Futures Only"
 REPORT_VARIANT = "tff_futures_only"
 PAGE_SIZE = 5000
@@ -90,6 +90,14 @@ CONTRACT_NAME = "contract_market_name"
 POSITION_FIELDS = tuple(
     dict.fromkeys(field for _, fields in CATEGORIES.values() for field in fields.values())
 )
+# These current TFF weekly changes are retained in raw page payloads. They are
+# source deltas, distinct from changes calculated from successive observations.
+CHANGE_FIELDS = (
+    "change_in_open_interest_all",
+    "change_in_dealer_long_all",
+    "change_in_dealer_short_all",
+    "change_in_dealer_spread_all",
+)
 MISSING = {"", ".", "*", "-", "NA", "N/A", "NULL", "NONE"}
 
 
@@ -120,7 +128,6 @@ class Record:
     code: str
     market_name: str
     contract_name: str | None
-    as_of_date: str | None
     metrics: tuple[Measure, ...]
 
 
@@ -189,9 +196,6 @@ def parse_rows(payload: str | list[Mapping[str, Any]]) -> tuple[Record, ...]:
         if CONTRACT_NAME not in row:
             raise CftcResponseError(f"row {index} missing source field {CONTRACT_NAME}")
         report_date = _date(row.get(REPORT_DATE))
-        asof = row.get("as_of_date_in_form_yy_mm_dd")
-        if asof is not None and not isinstance(asof, str):
-            raise CftcResponseError("invalid as-of date in form")
         fields = [("all_participants", "open_interest", "open_interest_all")]
         fields += [
             (category, metric, field)
@@ -204,7 +208,7 @@ def parse_rows(payload: str | list[Mapping[str, Any]]) -> tuple[Record, ...]:
                 raise CftcResponseError(f"row {index} missing source field {field}")
             value, raw = _count(row[field], field)
             measures.append(Measure(category, metric, field, value, raw))
-        record = Record(report_date, code, name.strip(), contract_name, asof, tuple(measures))
+        record = Record(report_date, code, name.strip(), contract_name, tuple(measures))
         identity = (code, report_date)
         old = seen.get(identity)
         if old is not None:
@@ -268,11 +272,11 @@ class CftcClient:
                 "id",
                 MARKET_NAME,
                 CONTRACT_NAME,
-                "as_of_date_in_form_yy_mm_dd",
                 REPORT_DATE,
                 CODE,
                 "open_interest_all",
                 *POSITION_FIELDS,
+                *CHANGE_FIELDS,
             ]
             filters = [f"{CODE} in ({codes})"]
             if start_date:
@@ -476,7 +480,6 @@ def ingest_cftc(
                             "market_and_exchange_names": record.market_name,
                             "contract_market_name": record.contract_name,
                             "report_date": record.report_date.isoformat(),
-                            "as_of_date_in_form": record.as_of_date,
                             "participant_category": measure.participant,
                             "participant_label": CATEGORIES.get(
                                 measure.participant, ("All participants", {})

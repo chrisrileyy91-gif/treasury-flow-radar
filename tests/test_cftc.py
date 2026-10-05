@@ -68,9 +68,23 @@ def fixture_text():
 
 def test_official_codes_cover_requested_treasury_contracts():
     records = parse_rows(fixture_text())
+    fixture_rows = json.loads(fixture_text())
     assert {r.code for r in records} == set(CONTRACTS)
     assert len(records) == 10
     assert all(r.contract_name for r in records)
+    assert all("as_of_date_in_form_yy_mm_dd" not in row for row in fixture_rows)
+    assert all(
+        {
+            "report_date_as_yyyy_mm_dd",
+            "contract_market_name",
+            "change_in_open_interest_all",
+            "change_in_dealer_long_all",
+            "change_in_dealer_short_all",
+            "change_in_dealer_spread_all",
+        }
+        <= row.keys()
+        for row in fixture_rows
+    )
     assert {CONTRACTS[k][0] for k in ("042601", "044601", "043602", "043607", "020601")} == {
         "ust_2_year_note_042601",
         "ust_5_year_note_044601",
@@ -164,7 +178,7 @@ def test_provider_missing_markers_are_not_zero(marker):
 def test_reporting_date_is_not_retrieval_date():
     r = parse_rows(fixture_text())[0]
     assert r.report_date.isoformat() == "2026-09-29"
-    assert r.as_of_date == "260929"
+    assert r.contract_name == "2-YEAR U.S. TREASURY NOTES"
     assert r.report_date != RETRIEVED.date()
     assert (
         parse_rows(
@@ -219,11 +233,19 @@ def test_public_official_api_query_has_no_credentials():
     request, timeout = opener.requests[0]
     url = urlsplit(request.full_url)
     params = parse_qs(url.query)
-    assert url.netloc == "publicreporting.cftc.gov"
+    assert url.netloc == "publicreportinghub.cftc.gov"
     assert url.path == f"/resource/{DATASET_ID}.json"
     assert "042601" in params["$where"][0]
     assert "dealer_positions_spread_all" in params["$select"][0]
     assert "contract_market_name" in params["$select"][0]
+    assert "report_date_as_yyyy_mm_dd" in params["$select"][0]
+    assert "as_of_date_in_form_yy_mm_dd" not in params["$select"][0]
+    assert {
+        "change_in_open_interest_all",
+        "change_in_dealer_long_all",
+        "change_in_dealer_short_all",
+        "change_in_dealer_spread_all",
+    } <= set(params["$select"][0].split(","))
     assert "api_key" not in params
     assert request.get_header("Accept") == "application/json" and timeout > 0
 
@@ -237,6 +259,9 @@ def test_cftc_query_limits_history_without_changing_weekly_observations():
     assert "2025-10-01T00:00:00.000" in where
     assert "2026-10-01T23:59:59.999" in where
     assert page.records[0].report_date == date(2026, 9, 29)
+    assert page.records[0].contract_name == "2-YEAR U.S. TREASURY NOTES"
+    raw_row = json.loads(page.payload)[0]
+    assert raw_row["change_in_open_interest_all"] is None
 
 
 def test_history_pages_are_ordered_and_complete():
@@ -367,7 +392,7 @@ def test_http_400_keeps_socrata_query_diagnostic():
         }
     ).encode()
     error = HTTPError(
-        "https://publicreporting.cftc.gov/resource/gpe5-46if.json",
+        "https://publicreportinghub.cftc.gov/resource/gpe5-46if.json",
         400,
         "Bad Request",
         {},
