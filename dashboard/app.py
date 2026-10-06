@@ -48,7 +48,7 @@ def render_dashboard(database_path: str | Path,
             }
         except (ValueError, TypeError):
             user_event = None
-    return render_report(report, user_event=user_event, allow_event_input=True)
+    return render_report(report, user_event=user_event, allow_event_input=True, event_limit=60)
 
 
 def make_server(database_path: str | Path, host: str = "127.0.0.1",

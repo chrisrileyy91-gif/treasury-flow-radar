@@ -296,3 +296,16 @@ When only maturity is available, estimated duration is explicitly a maturity-yea
 ### Evidence and interpretation
 
 Evidence records distinguish FACT, CALCULATION, OBSERVATION, MECHANISM, INFERENCE, and HYPOTHESIS and carry statements, support, sources, observation dates, and retrieval dates. Confidence is omitted unless a statistical basis is explicitly defined. A calculation or co-movement observation does not by itself establish a mechanism, inference, hypothesis, causality, or manipulation.
+
+
+## Human-readable dashboard and static snapshot
+
+The dashboard begins with **SYSTEM READ**, a concise statement of current measurable yield, curve, dealer, CFTC, Treasury-supply, corporate-issuance, and market-confirmation status. Its labels are derived from source-backed facts or deterministic calculations; it does not score conditions, forecast outcomes, or infer causality.
+
+**WHAT IS HAPPENING?** keeps the first view to the latest 10Y/2Y levels and five/ten-observation changes, 10Y–2Y spread, current dealer position, a compact five-contract CFTC summary, and the latest auction. Expandable participant and event sections retain detailed observations for auditability.
+
+The evidence panel separates available evidence from unavailable feeds. In particular, corporate event-level issuance data, Treasury-futures prices, HYG, IWM, and DXY remain **UNAVAILABLE — NO PRODUCTION FEED CONFIGURED** until a legitimate provider is configured. Missing data are not negative evidence.
+
+Static HTML uses the same read-only report calculations as the live dashboard. It is a self-contained snapshot with a generation time; it embeds only a bounded, recent event-detail set and compact provenance rather than the whole research report or database. Individual details include readable market, dealer, CFTC, auction, corporate, confirmation, study, provenance, and limitations sections. Raw structured evidence is available only inside collapsed details panels.
+
+The static export shows the most recent 20 detected events to keep it portable; the live dashboard shows the most recent 60. These limits affect presentation only, not stored observations or report calculations. The snapshot contains no API keys, environment values, credentials, network dependencies, Python dependency, or SQLite dependency.

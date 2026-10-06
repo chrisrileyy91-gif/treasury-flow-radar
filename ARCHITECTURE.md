@@ -273,3 +273,12 @@ python -m dashboard.export --database data/treasury_flow_radar.sqlite3 --output 
 ### Current provider availability
 
 FRED DGS2/DGS10, NY Fed positioning, CFTC Treasury futures positions, and Treasury auction ingestion are implemented. Market confirmation supports Treasury futures, HYG, IWM, and DXY identifiers but no production price feed is configured. No production corporate event-level issuance provider is enabled. These missing feeds remain unavailable in reports and are never filled by test fixtures.
+
+
+## Human-readable dashboard projection
+
+The dashboard presentation module is a projection over the shared read-only research report. It selects current facts, compact per-contract CFTC summaries, source timing, evidence availability, a rate-lock research checklist, provenance, and a bounded list of recent event details. It does not alter database rows, ingestion, evidence types, or calculations.
+
+The renderer uses that projection for both modes. The live app requests up to 60 recent expandable events. The exporter uses the default 20-event static snapshot limit so the portable report stays small while preserving a usable audit trail. Every retained event is organized as market move, dealer positioning, CFTC positioning, Treasury supply, corporate issuance, market confirmation, event study, provenance, limitations, and collapsed raw structured evidence. The renderer never embeds the full report object, raw database, environment values, or credentials.
+
+The first screen uses SYSTEM READ, WHAT IS HAPPENING?, an evidence-availability panel, and a corporate issuance/rate-lock research-status checklist. Deterministic yield language is limited to the sign of the actual five-observation DGS10 change; it is not a market score, signal, or prediction. CFTC compact summaries show one current participant category per contract and preserve all current categories in collapsed details. Observation date, retrieval time, and publication time stay distinct throughout the projection.

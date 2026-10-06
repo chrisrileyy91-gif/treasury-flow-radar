@@ -137,5 +137,41 @@ def test_empty_database_report_is_read_only_and_export_is_offline(tmp_path):
     assert "<style>" in html and "<script>" in html
     assert not re.search(r"<(?:script|link)[^>]+(?:src|href)=['\"]https?://", html, re.IGNORECASE)
     assert "<form" not in html
+    assert "FRED_API_KEY" not in html and "TREASURY_FLOW_RADAR_DB" not in html
+    assert len(html.encode("utf-8")) < 1_000_000
+
+
+def test_compact_dashboard_overview_and_audit_details_are_rendered():
+    rows = [
+        row("DGS10", "2025-09-25", 4.00), row("DGS2", "2025-09-25", 3.50),
+        row("DGS10", "2025-09-26", 4.10), row("DGS2", "2025-09-26", 3.55),
+        row("DGS10", "2025-09-29", 4.12), row("DGS2", "2025-09-29", 3.56),
+        row("DGS10", "2025-09-30", 4.14), row("DGS2", "2025-09-30", 3.58),
+        row("DGS10", "2025-10-01", 4.16), row("DGS2", "2025-10-01", 3.60),
+        row("DGS10", "2025-10-02", 4.18), row("DGS2", "2025-10-02", 3.62),
+    ]
+    report = build_research_report(rows, start_date=date(2025, 9, 1), end_date=date(2025, 10, 2), threshold_bps=1)
+    html = render_report(report)
+    assert "SYSTEM READ" in html
+    assert "WHAT IS HAPPENING?" in html
+    assert "EVIDENCE FOR / EVIDENCE AGAINST / UNKNOWN" in html
+    assert "CORPORATE ISSUANCE / RATE-LOCK HYPOTHESIS" in html
+    assert "UNAVAILABLE — NO PRODUCTION FEED CONFIGURED" in html
+    assert "Raw structured evidence" in html
+    assert "id=research-data" not in html
+    assert html.count("<details") > 1
+
+
+def test_compact_cftc_contract_summary_keeps_participant_details_collapsed():
+    rows = [
+        row("DGS10", "2025-10-01", 4.0), row("DGS10", "2025-10-02", 4.1),
+        row("UST_10", "2025-09-30", 120, source_identifier="CFTC", source_type="cftc", series_name="10Y Treasury", logical_key="dealer|long", unit="contracts", metadata={"participant_category": "dealer", "metric": "long"}),
+        row("UST_10", "2025-09-30", 80, source_identifier="CFTC", source_type="cftc", series_name="10Y Treasury", logical_key="dealer|short", unit="contracts", metadata={"participant_category": "dealer", "metric": "short"}),
+    ]
+    report = build_research_report(rows, start_date=date(2025, 9, 1), end_date=date(2025, 10, 2), threshold_bps=1)
+    html = render_report(report)
+    assert "CFTC positioning — compact contract summary" in html
+    assert "participant details" in html
+    assert "Spreading" in html
 
 
