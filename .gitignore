@@ -39,3 +39,8 @@ data/processed/**
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Generated pages and compressed database copies (published via Actions, never committed)
+site/
+data/*.html
+*.sqlite3.gz

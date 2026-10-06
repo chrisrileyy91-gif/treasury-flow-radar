@@ -197,3 +197,22 @@ def test_event_study_offsets_skip_no_value_dates():
     assert window[-4]["source_observation_date"] == "2025-06-30"
     assert window[1]["source_observation_date"] == "2025-07-08"
     assert window[0]["dgs10_change_bps"] == pytest.approx(2)
+
+
+def test_freshness_reports_latest_valued_observation_not_first_row():
+    rows = [_row("FRED", "DGS10", "2025-01-02", 4.0), _row("FRED", "DGS10", "2025-01-03", 4.1),
+            _row("FRED", "DGS10", "2025-01-06", None)]
+    report = build_research_report(rows, start_date=date(2025, 1, 1), end_date=date(2025, 1, 6))
+    fresh = report["data_freshness"]["FRED"]
+    assert fresh["observation_date"] == "2025-01-03"
+    assert fresh["retrieval_time"] == "2025-02-01T12:00:00Z"
+    assert fresh["publication_time"] is None
+
+
+def test_dealer_summary_carries_reported_weekly_history_only():
+    rows = [_row("NYFED", "PD_NET", day, value, unit="million_us_dollars", freq="weekly")
+            for day, value in (("2025-01-01", 100.0), ("2025-01-08", 120.0), ("2025-01-15", 90.0))]
+    report = build_research_report(rows, start_date=date(2025, 1, 1), end_date=date(2025, 1, 15))
+    history = report["dealer_positions"][0]["history"]
+    assert [h["observation_date"] for h in history] == ["2025-01-01", "2025-01-08", "2025-01-15"]
+    assert [h["position"] for h in history] == [100.0, 120.0, 90.0]

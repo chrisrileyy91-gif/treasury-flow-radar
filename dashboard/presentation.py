@@ -1,171 +1,254 @@
-"""Compact, provenance-aware views for the dashboard and offline snapshot."""
+"""Compact, provenance-aware view model for the dashboard and the published page.
+
+This module is a projection over the shared read-only research report. It selects
+current facts, short histories for charts, and a bounded list of recent events. It
+never changes stored rows or research calculations, and every value it exposes is
+either a reported FACT, a deterministic CALCULATION, or explicitly unavailable.
+"""
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Mapping
+from datetime import date, datetime
 from typing import Any
+
+# Constant-maturity yields shown on the curve, shortest to longest.
+MATURITIES = (
+    ("DGS2", "2-year", 2), ("DGS5", "5-year", 5), ("DGS7", "7-year", 7),
+    ("DGS10", "10-year", 10), ("DGS30", "30-year", 30),
+)
+# CFTC TFF participant groups shown up front; the others stay in the report.
+CFTC_GROUPS = (("dealer", "Dealers"), ("asset_manager", "Asset managers"),
+               ("leveraged_fund", "Leveraged funds"))
+# CFTC contracts by tenor, with short display names.
+CFTC_CONTRACTS = (
+    ("tff_futures_only_ust_2_year_note_042601", "2-year"),
+    ("tff_futures_only_ust_5_year_note_044601", "5-year"),
+    ("tff_futures_only_ust_10_year_note_043602", "10-year"),
+    ("tff_futures_only_ust_ultra_10_year_note_043607", "Ultra 10"),
+    ("tff_futures_only_ust_30_year_bond_020601", "Bond"),
+)
+NO_OBSERVATIONS = "UNAVAILABLE — NO OBSERVATIONS IN DATABASE"
+NO_FEED = "UNAVAILABLE — NO PRODUCTION FEED CONFIGURED"
+HISTORY_SESSIONS = 130   # about six months of daily yields for the chart
+DEALER_WEEKS = 52
+AUCTION_ROWS = 8
 
 
 def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) -> dict[str, Any]:
-    """Make a small human-readable projection without changing research calculations.
-
-    The research report remains the audit/calculation layer. This projection keeps
-    current facts and bounded event evidence for presentation, avoiding repeated
-    raw observations and provenance payloads in static HTML.
-    """
-    yields = report.get("yield_changes", {})
-    dgs2 = _latest(yields.get("DGS2", []))
-    dgs10 = _latest(yields.get("DGS10", []))
-    spread = _latest(report.get("spread", []))
-    dealers = list(report.get("dealer_positions", []))
-    dealer = _latest(dealers)
-    cftc = _cftc_contracts(report.get("cftc_positions", []))
+    """Make a small human-readable projection without changing research calculations."""
+    yields = report.get("yield_changes", {}) or {}
+    curve = _curve(yields)
+    dealer = _dealer(list(report.get("dealer_positions", [])))
+    cftc = _cftc(list(report.get("cftc_positions", [])))
     auctions = list(report.get("treasury_auctions", []))
-    latest_auction = _latest(auctions)
-    availability = dict(report.get("availability", {}))
-    corporate = report.get("corporate_issuance", {})
-    market = report.get("market_confirmation", {})
-    events = list(report.get("events", []))[-event_limit:]
+    corporate = report.get("corporate_issuance", {}) or {}
+    market = report.get("market_confirmation", {}) or {}
+    spread = _latest(report.get("spread", []))
+    all_events = list(report.get("events", []))
+    events = all_events[-event_limit:] if event_limit > 0 else []
+    ten = yields.get("DGS10", [])
+    latest_ten = _latest(ten)
     return {
         "generated_at": report.get("generated_at"),
         "scope": dict(report.get("scope", {})),
-        "system_read": _system_read(dgs2, dgs10, spread, dealer, cftc, latest_auction, corporate, market),
-        "happening": {
-            "dgs10": _yield_fact(dgs10),
-            "dgs2": _yield_fact(dgs2),
-            "spread": _spread_fact(spread),
-            "dealer": _dealer_fact(dealer),
-            "cftc": cftc,
-            "auction": _auction_fact(latest_auction),
-        },
-        "evidence": _evidence_status(dgs10, spread, dealer, cftc, latest_auction, corporate, market),
-        "rate_lock_status": _rate_lock_status(availability, corporate, market),
-        "events": [_event_view(item) for item in events],
-        "provenance": _provenance(report.get("source_provenance", []), report.get("data_freshness", {})),
-        "interpretation_limit": report.get("interpretation_limit"),
+        "data_through": max((row["date"] for row in curve["rows"] if row["date"]), default=None),
+        "curve": curve,
+        "curve_read": _curve_read(curve["rows"]),
+        "ten_year_history": _ten_year_history(ten, all_events),
+        "spread": None if spread is None else {
+            "spread_bps": spread.get("spread_bps"), "daily_change_bps": spread.get("daily_change_bps"),
+            "date": spread.get("observation_date")},
+        "dealer": dealer,
+        "cftc": cftc,
+        "auctions": [_auction(item) for item in reversed(auctions[-AUCTION_ROWS:])],
+        "evidence": _evidence_status(latest_ten, spread, dealer, cftc, auctions, corporate, market),
+        "rate_lock_status": _rate_lock_status(report.get("availability", {}) or {}, corporate, market),
+        "corporate_status": str(corporate.get("status") or "Corporate issuance event feed not configured"),
+        "market_status": str(market.get("status") or "Market confirmation unavailable"),
+        "events": [_event_view(item) for item in reversed(events)],
         "event_limit": event_limit,
-        "event_count": len(report.get("events", [])),
+        "event_count": len(all_events),
+        "threshold_bps": (report.get("method") or {}).get("large_move_threshold_bps"),
+        "provenance": _provenance(report.get("source_provenance", []),
+                                  report.get("data_freshness", {}) or {},
+                                  report.get("generated_at")),
+        "interpretation_limit": report.get("interpretation_limit"),
     }
 
 
-def _latest(items: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+def _latest(items: Any) -> Mapping[str, Any] | None:
+    items = list(items or [])
     return items[-1] if items else None
 
 
-def _yield_fact(item: Mapping[str, Any] | None) -> dict[str, Any]:
-    if item is None:
-        return {"status": "UNAVAILABLE — NO OBSERVATIONS", "evidence_type": "FACT"}
-    return {"status": "AVAILABLE", "yield_percent": item.get("yield_percent"),
-            "observation_date": item.get("observation_date"),
-            "daily_change_bps": item.get("daily_change_bps"),
-            "change_5_observations_bps": item.get("change_5_observations_bps"),
-            "change_10_observations_bps": item.get("change_10_observations_bps"),
-            "evidence_type": item.get("evidence_type", "CALCULATION")}
+def _ago(rows: list[Mapping[str, Any]], sessions: int) -> Mapping[str, Any] | None:
+    return rows[-1 - sessions] if len(rows) > sessions else None
 
 
-def _spread_fact(item: Mapping[str, Any] | None) -> dict[str, Any]:
-    if item is None:
-        return {"status": "UNAVAILABLE — NO SHARED DGS2/DGS10 DATE", "evidence_type": "CALCULATION"}
-    return {"status": "AVAILABLE", "spread_bps": item.get("spread_bps"),
-            "daily_change_bps": item.get("daily_change_bps"),
-            "observation_date": item.get("observation_date"), "evidence_type": item.get("evidence_type")}
-
-
-def _dealer_fact(item: Mapping[str, Any] | None) -> dict[str, Any]:
-    if item is None:
-        return {"status": "UNAVAILABLE — NO OBSERVATIONS", "evidence_type": "FACT"}
-    provenance = item.get("provenance") or {}
-    return {"status": "AVAILABLE", "series_name": item.get("series_name"), "position": item.get("position"),
-            "change": item.get("change"), "unit": item.get("unit"),
-            "observation_date": item.get("observation_date"), "frequency": item.get("reporting_frequency"),
-            "retrieval_time": provenance.get("retrieval_time"), "publication_time": provenance.get("publication_time"),
-            "source": provenance.get("source_identifier"), "evidence_type": item.get("evidence_type")}
-
-
-def _cftc_contracts(rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
-    for row in rows:
-        grouped[str(row.get("contract") or row.get("series_identifier"))].append(row)
-    results = []
-    for contract, values in sorted(grouped.items()):
-        values.sort(key=lambda r: (str(r.get("positioning_date")), str(r.get("participant_category"))))
-        latest_date = max(str(value.get("positioning_date") or "") for value in values)
-        current = [value for value in values if str(value.get("positioning_date") or "") == latest_date]
-        dealer = next((value for value in current if value.get("participant_category") == "dealer"), current[0])
-        results.append({
-            "contract": contract, "positioning_date": latest_date or None,
-            "summary_category": dealer.get("participant_category"), "net": dealer.get("net"),
-            "net_change": dealer.get("net_change"), "long": dealer.get("long"), "short": dealer.get("short"),
-            "spreading": dealer.get("spreading"), "evidence_type": dealer.get("evidence_type", "FACT"),
-            "details": [_cftc_row(value) for value in current],
+def _curve(yields: Mapping[str, list[Mapping[str, Any]]]) -> dict[str, Any]:
+    """Latest level and 1/5/20-session changes per maturity, plus three curve snapshots."""
+    rows = []
+    snapshots: dict[str, list[dict[str, Any]]] = {"latest": [], "5": [], "20": []}
+    snapshot_dates: dict[str, set[str]] = {"latest": set(), "5": set(), "20": set()}
+    for series, label, years in MATURITIES:
+        series_rows = [r for r in yields.get(series, []) if r.get("yield_percent") is not None]
+        latest = _latest(series_rows)
+        rows.append({
+            "series": series, "label": label, "years": years,
+            "yield": None if latest is None else latest.get("yield_percent"),
+            "date": None if latest is None else latest.get("observation_date"),
+            "d1": None if latest is None else latest.get("daily_change_bps"),
+            "d5": None if latest is None else latest.get("change_5_observations_bps"),
+            "d20": None if latest is None else latest.get("change_20_observations_bps"),
         })
-    return results
-
-
-def _cftc_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    provenance = row.get("provenance") or {}
-    return {key: row.get(key) for key in ("participant_category", "long", "short", "spreading", "net", "net_change", "positioning_date", "reporting_frequency", "evidence_type")} | {
-        "source": provenance.get("source_identifier"), "retrieval_time": provenance.get("retrieval_time"),
-        "publication_time": provenance.get("publication_time"),
+        for key, item in (("latest", latest), ("5", _ago(series_rows, 5)), ("20", _ago(series_rows, 20))):
+            if item is not None:
+                snapshots[key].append({"label": label, "years": years, "yield": item["yield_percent"]})
+                snapshot_dates[key].add(item["observation_date"])
+    return {
+        "rows": rows,
+        "snapshots": [
+            {"key": key, "name": name, "points": snapshots[key],
+             # A snapshot date is shown only when every maturity shares it.
+             "date": next(iter(snapshot_dates[key])) if len(snapshot_dates[key]) == 1 else None}
+            for key, name in (("latest", "Latest"), ("5", "5 sessions earlier"),
+                              ("20", "20 sessions earlier"))
+            if snapshots[key]
+        ],
     }
 
 
-def _auction_fact(item: Mapping[str, Any] | None) -> dict[str, Any]:
+def _curve_read(rows: list[dict[str, Any]]) -> str | None:
+    """Deterministic one-sentence description of the 5-session change (a CALCULATION)."""
+    moves = [(r["label"], r["d5"]) for r in rows if r["d5"] is not None]
+    if len(moves) < 2:
+        return None
+    rose = [label for label, change in moves if change > 0.5]
+    fell = [label for label, change in moves if change < -0.5]
+    if len(rose) == len(moves):
+        lead = "Over the last 5 sessions, yields rose at every maturity shown"
+    elif len(fell) == len(moves):
+        lead = "Over the last 5 sessions, yields fell at every maturity shown"
+    elif not rose and not fell:
+        lead = "Over the last 5 sessions, yields were little changed (within ±0.5 bp)"
+    else:
+        flat = [label for label, change in moves if label not in rose and label not in fell]
+        parts = [f"{_join(rose)} rose" if rose else "", f"{_join(fell)} fell" if fell else "",
+                 f"{_join(flat)} {'was' if len(flat) == 1 else 'were'} unchanged" if flat else ""]
+        lead = "Over the last 5 sessions, yields were mixed: " + "; ".join(p for p in parts if p)
+    label, change = max(moves, key=lambda item: abs(item[1]))
+    text = f"{lead}. The largest move was the {label} ({_bp(change)})."
+    short = next((r["d5"] for r in rows if r["series"] == "DGS2"), None)
+    long_ = next((r["d5"] for r in rows if r["series"] == "DGS30"), None)
+    if short is not None and long_ is not None:
+        gap = long_ - short
+        if abs(gap) >= 0.5:
+            shape = "steepened" if gap > 0 else "flattened"
+            text += f" The 2-year to 30-year spread {shape} by {abs(gap):.0f} bp."
+    return text
+
+
+def _join(items: list[str]) -> str:
+    if len(items) <= 2:
+        return " and ".join(items)
+    return ", ".join(items[:-1]) + f", and {items[-1]}"
+
+
+def _bp(value: float) -> str:
+    rounded = round(value)
+    sign = "+" if rounded > 0 else "−" if rounded < 0 else "±"
+    return f"{sign}{abs(rounded)} bp"
+
+
+def _ten_year_history(rows: list[Mapping[str, Any]], events: list[Mapping[str, Any]]) -> dict[str, Any]:
+    valued = [r for r in rows if r.get("yield_percent") is not None][-HISTORY_SESSIONS:]
+    points = [{"date": r["observation_date"], "yield": r["yield_percent"]} for r in valued]
+    start = points[0]["date"] if points else None
+    marks = []
+    for item in events:
+        event = item.get("event", {})
+        day = event.get("event_date")
+        if start and day and day >= start:
+            marks.append({"date": day, "change_bps": event.get("change_bps"),
+                          "yield": event.get("current_yield_percent")})
+    return {"points": points, "events": marks}
+
+
+def _dealer(items: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    item = _latest(items)
     if item is None:
-        return {"status": "UNAVAILABLE — NO OBSERVATIONS", "evidence_type": "FACT"}
+        return None
+    unit = item.get("unit")
+    scale = 1e-3 if unit == "million_us_dollars" else None  # millions -> billions
+    def bn(value: Any) -> float | None:
+        return None if value is None or scale is None else float(value) * scale
     provenance = item.get("provenance") or {}
-    return {"status": "AVAILABLE", "security_type": item.get("security_type"), "security_term": item.get("security_term"),
-            "auction_date": item.get("auction_date"), "offering_amount": item.get("offering_amount"),
-            "accepted_amount": item.get("accepted_amount"), "bid_to_cover": item.get("bid_to_cover"),
-            "yield_or_rate": item.get("yield_or_rate"), "yield_or_rate_unit": item.get("yield_or_rate_unit"),
-            "source": provenance.get("source_identifier"), "retrieval_time": provenance.get("retrieval_time"),
-            "publication_time": provenance.get("publication_time"), "evidence_type": item.get("evidence_type")}
+    history = list(item.get("history") or [])[-DEALER_WEEKS:]
+    return {
+        "name": item.get("series_name"), "unit": unit,
+        "position_bn": bn(item.get("position")), "previous_bn": bn(item.get("previous_position")),
+        "change_bn": bn(item.get("change")), "position_raw": item.get("position"),
+        "date": item.get("observation_date"), "frequency": item.get("reporting_frequency"),
+        "retrieval_time": provenance.get("retrieval_time"),
+        "history": [{"date": h["observation_date"], "value": bn(h.get("position"))} for h in history],
+    }
 
 
-def _system_read(dgs2: Mapping[str, Any] | None, dgs10: Mapping[str, Any] | None,
-                 spread: Mapping[str, Any] | None, dealer: Mapping[str, Any] | None,
-                 cftc: list[dict[str, Any]], auction: Mapping[str, Any] | None,
-                 corporate: Mapping[str, Any], market: Mapping[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {"label": "Treasury yields", "value": _movement(dgs10), "detail": _yield_fact(dgs10), "evidence_type": "CALCULATION"},
-        {"label": "Curve", "value": _curve_read(spread), "detail": _spread_fact(spread), "evidence_type": "CALCULATION"},
-        {"label": "Primary dealers", "value": _availability(dealer is not None), "detail": _dealer_fact(dealer), "evidence_type": "FACT"},
-        {"label": "CFTC positioning", "value": f"AVAILABLE — {len(cftc)} Treasury contracts" if cftc else "UNAVAILABLE — NO OBSERVATIONS", "detail": cftc, "evidence_type": "FACT"},
-        {"label": "Treasury supply", "value": _availability(auction is not None), "detail": _auction_fact(auction), "evidence_type": "FACT"},
-        {"label": "Corporate issuance", "value": str(corporate.get("status") or "UNAVAILABLE — NO PRODUCTION FEED CONFIGURED"), "detail": {}, "evidence_type": "FACT"},
-        {"label": "Market confirmation", "value": str(market.get("status") or "Market confirmation unavailable"), "detail": {}, "evidence_type": "OBSERVATION"},
-    ]
+def _cftc(rows: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    by_key = {(r.get("series_identifier"), r.get("participant_category")): r for r in rows}
+    known = {series for series, _ in CFTC_CONTRACTS}
+    contracts = list(CFTC_CONTRACTS) + sorted(
+        {(r.get("series_identifier"), r.get("contract") or r.get("series_identifier"))
+         for r in rows if r.get("series_identifier") not in known})
+    table = []
+    dates = set()
+    for series, label in contracts:
+        groups = {}
+        for key, _ in CFTC_GROUPS:
+            row = by_key.get((series, key))
+            groups[key] = None if row is None else {
+                "net": row.get("net"), "change": row.get("net_change"),
+                "long": row.get("long"), "short": row.get("short"), "spreading": row.get("spreading")}
+            if row is not None:
+                dates.add(row.get("positioning_date"))
+        if any(groups.values()):
+            table.append({"contract": label, "groups": groups})
+    dates.update(r.get("positioning_date") for r in rows if r.get("positioning_date"))
+    labels = dict(CFTC_CONTRACTS)
+    group_names = {**dict(CFTC_GROUPS), "other_reportable": "Other reportables",
+                   "nonreportable": "Nonreportable"}
+    details = [{
+        "contract": labels.get(r.get("series_identifier"), r.get("contract") or r.get("series_identifier")),
+        "group": group_names.get(r.get("participant_category"), r.get("participant_category")),
+        "long": r.get("long"), "short": r.get("short"), "spreading": r.get("spreading"),
+        "net": r.get("net"), "change": r.get("net_change"), "date": r.get("positioning_date"),
+    } for r in sorted(rows, key=lambda r: (
+        [s for s, _ in contracts].index(r.get("series_identifier")) if r.get("series_identifier") in
+        [s for s, _ in contracts] else 99, str(r.get("participant_category"))))]
+    return {"date": max(dates) if dates else None, "rows": table, "details": details,
+            "groups": [{"key": key, "label": label} for key, label in CFTC_GROUPS]}
 
 
-def _movement(item: Mapping[str, Any] | None) -> str:
-    if item is None or item.get("change_5_observations_bps") is None:
-        return "UNAVAILABLE — INSUFFICIENT OBSERVATIONS"
-    change = float(item["change_5_observations_bps"])
-    # Exact deterministic wording: the sign of the five-observation calculation.
-    direction = "RISING" if change > 0 else "FALLING" if change < 0 else "UNCHANGED"
-    return f"{direction} over 5 observations ({change:.1f} bp)"
-
-
-def _curve_read(item: Mapping[str, Any] | None) -> str:
-    if item is None:
-        return "UNAVAILABLE — NO SHARED DGS2/DGS10 DATE"
-    value = item.get("spread_bps")
-    change = item.get("daily_change_bps")
-    suffix = "" if change is None else f"; latest change {float(change):.1f} bp"
-    return f"10Y–2Y {float(value):.1f} bp{suffix}" if value is not None else "UNAVAILABLE"
-
-
-def _availability(available: bool) -> str:
-    return "AVAILABLE" if available else "UNAVAILABLE — NO OBSERVATIONS"
-
-
-NO_OBSERVATIONS = "UNAVAILABLE — NO OBSERVATIONS IN DATABASE"
-NO_FEED = "UNAVAILABLE — NO PRODUCTION FEED CONFIGURED"
+def _auction(item: Mapping[str, Any]) -> dict[str, Any]:
+    def dollars(value: Any, unit: Any) -> float | None:
+        if value is None:
+            return None
+        return float(value) if unit in (None, "us_dollars") else None
+    return {
+        "date": item.get("auction_date"),
+        "security": " ".join(x for x in (item.get("security_term"), item.get("security_type")) if x),
+        "offering_usd": dollars(item.get("offering_amount"), item.get("offering_amount_unit")),
+        "bid_to_cover": item.get("bid_to_cover"),
+        "yield": item.get("yield_or_rate"),
+        "cusip": item.get("cusip"),
+    }
 
 
 def _evidence_status(dgs10: Mapping[str, Any] | None, spread: Mapping[str, Any] | None,
-                     dealer: Mapping[str, Any] | None, cftc: list[dict[str, Any]],
-                     auction: Mapping[str, Any] | None, corporate: Mapping[str, Any],
+                     dealer: Mapping[str, Any] | None, cftc: Mapping[str, Any] | None,
+                     auctions: list[Any], corporate: Mapping[str, Any],
                      market: Mapping[str, Any]) -> dict[str, Any]:
     """List evidence as available only when the stored report actually contains it.
 
@@ -177,8 +260,8 @@ def _evidence_status(dgs10: Mapping[str, Any] | None, spread: Mapping[str, Any] 
         ("10Y yield movement", dgs10 is not None and dgs10.get("yield_percent") is not None),
         ("10Y–2Y curve movement", spread is not None and spread.get("spread_bps") is not None),
         ("Primary dealer positioning", dealer is not None),
-        ("CFTC positioning", bool(cftc)),
-        ("Treasury auction data", auction is not None),
+        ("CFTC positioning", bool(cftc and cftc.get("rows"))),
+        ("Treasury auction data", bool(auctions)),
     ]
     available = [label for label, present in treasury_side if present]
     missing = [{"item": label, "reason": NO_OBSERVATIONS} for label, present in treasury_side if not present]
@@ -195,14 +278,15 @@ def _evidence_status(dgs10: Mapping[str, Any] | None, spread: Mapping[str, Any] 
                                       "Observation-date alignment does not establish publication-time availability or causality."]}
 
 
-def _rate_lock_status(availability: Mapping[str, Any], corporate: Mapping[str, Any], market: Mapping[str, Any]) -> list[dict[str, str]]:
-    issuance_available = corporate.get("status") == "AVAILABLE"
+def _rate_lock_status(availability: Mapping[str, Any], corporate: Mapping[str, Any],
+                      market: Mapping[str, Any]) -> list[dict[str, str]]:
+    issuance = "AVAILABLE" if corporate.get("status") == "AVAILABLE" else "UNAVAILABLE"
     return [
-        {"item": "Corporate issuance event feed", "status": "AVAILABLE" if issuance_available else "UNAVAILABLE"},
-        {"item": "Deal size", "status": "AVAILABLE" if issuance_available else "UNAVAILABLE"},
-        {"item": "Maturity/duration", "status": "AVAILABLE" if issuance_available else "UNAVAILABLE"},
-        {"item": "Pricing date", "status": "AVAILABLE" if issuance_available else "UNAVAILABLE"},
-        {"item": "Settlement date", "status": "AVAILABLE" if issuance_available else "UNAVAILABLE"},
+        {"item": "Corporate issuance event feed", "status": issuance},
+        {"item": "Deal size", "status": issuance},
+        {"item": "Maturity/duration", "status": issuance},
+        {"item": "Pricing date", "status": issuance},
+        {"item": "Settlement date", "status": issuance},
         {"item": "Treasury yield event data", "status": "AVAILABLE" if availability.get("FRED yields") == "AVAILABLE" else "UNAVAILABLE"},
         {"item": "Dealer positioning", "status": "AVAILABLE" if availability.get("NYFED") == "AVAILABLE" else "UNAVAILABLE"},
         {"item": "CFTC positioning", "status": "AVAILABLE" if availability.get("CFTC") == "AVAILABLE" else "UNAVAILABLE"},
@@ -213,58 +297,70 @@ def _rate_lock_status(availability: Mapping[str, Any], corporate: Mapping[str, A
 
 def _event_view(item: Mapping[str, Any]) -> dict[str, Any]:
     event = item.get("event", {})
-    dealer = item.get("dealer_context", {})
-    cftc = item.get("cftc_context", {}).get("contracts", [])
-    auctions = item.get("auction_context", {}).get("auctions", [])
-    corporate = item.get("corporate_issuance_context", {})
-    market = item.get("market_confirmation", {})
     study = item.get("event_study", {})
+    window = (study.get("windows") or {}).get("T-5_T+5", [])
+    dealer = next((value for value in (item.get("dealer_context") or {}).values()
+                   if value and value.get("position") is not None), None)
+    cftc = (item.get("cftc_context") or {}).get("contracts", [])
+    auctions = (item.get("auction_context") or {}).get("auctions", [])
     return {
-        "summary": {"date": event.get("event_date"), "dgs10_change_bps": event.get("change_bps"),
-                    "dgs2_change_bps": event.get("dgs2_change_bps"), "curve_change_bps": event.get("spread_change_bps"),
-                    "dealer_available": any(value and value.get("position") is not None for value in dealer.values()),
-                    "cftc_available": bool(cftc), "auction_available": bool(auctions),
-                    "corporate_available": corporate.get("status") == "AVAILABLE",
-                    "market_confirmation_available": market.get("status") == "AVAILABLE"},
-        "market_move": {key: event.get(key) for key in ("event_date", "prior_observation_date", "prior_yield_percent", "current_yield_percent", "change_bps", "dgs2_change_bps", "spread_10y_minus_2y_bps", "spread_change_bps", "evidence_type")},
-        "dealer_positioning": {name: _compact_dealer(value) for name, value in dealer.items()},
-        "cftc_positioning": [_compact_cftc_contract(value) for value in cftc],
-        "treasury_supply": [_compact_auction(value) for value in auctions],
-        "corporate_issuance": {"status": corporate.get("status"), "events": corporate.get("events", [])},
-        "market_confirmation": {"status": market.get("status"), "classification": market.get("classification")},
-        "event_study": {"alignment": study.get("window_alignment"), "summary": study.get("summary"), "windows": study.get("windows")},
-        "limitations": ["Weekly dealer and CFTC context is not forward-filled.",
-                        "Observation-date alignment does not establish publication-time availability or causality."],
+        "date": event.get("event_date"),
+        "prior_date": event.get("prior_observation_date"),
+        "skipped": list(event.get("skipped_no_value_dates") or []),
+        "d10": event.get("change_bps"),
+        "d2": event.get("dgs2_change_bps"),
+        "curve": event.get("spread_change_bps"),
+        "window": [{
+            "offset": row.get("offset"), "date": row.get("source_observation_date"),
+            "changes": {series: row.get(f"{series.lower()}_change_bps") for series, _, _ in MATURITIES},
+        } for row in window],
+        "summary_10y": (study.get("summary") or {}).get("DGS10"),
+        "dealer_date": None if dealer is None else dealer.get("observation_date"),
+        "cftc_date": next((c.get("positioning_date") for c in cftc if c.get("positioning_date")), None),
+        "auctions": [{"date": a.get("auction_date"),
+                      "security": " ".join(x for x in (a.get("security_term"), a.get("security_type")) if x)}
+                     for a in auctions],
+        "corporate_status": (item.get("corporate_issuance_context") or {}).get("status"),
+        "market_status": (item.get("market_confirmation") or {}).get("status"),
     }
 
 
-def _compact_dealer(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    if not value:
-        return None
-    return {key: value.get(key) for key in ("position", "unit", "observation_date", "lag_days", "temporal_relationship", "change_from_prior_observation", "evidence_type", "availability_note")}
+SOURCE_NAMES = {
+    "FRED": "Treasury yields (FRED)",
+    "NYFED": "Primary dealer positions (NY Fed)",
+    "CFTC": "Futures positioning (CFTC)",
+    "U.S. Treasury Fiscal Data": "Treasury auctions (Fiscal Data)",
+}
 
 
-def _compact_cftc_contract(value: Mapping[str, Any]) -> dict[str, Any]:
-    return {"contract": value.get("contract"), "positioning_date": value.get("positioning_date"),
-            "days_before_event": value.get("days_before_event"), "temporal_relationship": value.get("temporal_relationship"),
-            "participant_categories": [{key: item.get(key) for key in ("category", "long", "short", "spreading", "net_position", "evidence_type")} for item in value.get("participant_categories", [])]}
-
-
-def _compact_auction(value: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: value.get(key) for key in ("security_type", "security_term", "auction_date", "offering_amount", "accepted_amount", "bid_to_cover", "yield_or_rate", "yield_or_rate_unit", "evidence_type", "temporal_alignment")}
-
-
-def _provenance(rows: list[Mapping[str, Any]], freshness: Mapping[str, Any]) -> list[dict[str, Any]]:
-    seen = set()
-    result = []
+def _provenance(rows: list[Mapping[str, Any]], freshness: Mapping[str, Any],
+                generated_at: Any) -> list[dict[str, Any]]:
+    urls: dict[str, str | None] = {}
     for row in rows:
         source = row.get("source_identifier")
-        if not source or source in seen:
-            continue
-        seen.add(source)
-        timing = freshness.get(source, {})
-        result.append({"source": source, "reference": row.get("source_url"), "series": row.get("series_identifier"),
-                       "observation_date": timing.get("observation_date"), "retrieved": timing.get("retrieval_time"),
-                       "published": timing.get("publication_time"), "evidence_type": "FACT"})
+        if source and source not in urls:
+            urls[source] = row.get("source_url")
+    built = _parse_instant(generated_at)
+    result = []
+    for source in sorted(set(urls) | set(freshness), key=lambda s: list(SOURCE_NAMES).index(s)
+                         if s in SOURCE_NAMES else 99):
+        timing = freshness.get(source, {}) or {}
+        observed = timing.get("observation_date")
+        age = None
+        if observed and built:
+            age = (built.date() - date.fromisoformat(observed)).days
+        result.append({"source": source, "name": SOURCE_NAMES.get(source, source),
+                       "reference": urls.get(source), "observation_date": observed,
+                       "observation_age_days": age, "retrieved": timing.get("retrieval_time"),
+                       "published": timing.get("publication_time")})
     return result
 
+
+def _parse_instant(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else None

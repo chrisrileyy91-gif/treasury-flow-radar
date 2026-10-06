@@ -131,9 +131,10 @@ def test_cftc_spreading_stays_separate_in_dashboard(tmp_path):
                  logical=f"{day}|leveraged_funds|{metric}", unit="contracts",
                  metadata={"participant_category": "leveraged_funds", "metric": metric})
     html = render_dashboard(path)
-    assert "120.0 / 80.0 / 700.0 / 40.0" in html
-    assert "spreading" in html
-    assert "10.0" in html  # latest outright net change versus the preceding report
+    # Leveraged funds: long 120, short 80, spreading 700 (kept separate), net +40; week change +10.
+    assert ("<td class=\"l\">Leveraged funds</td><td class=\"r\">120</td><td class=\"r\">80</td>"
+            "<td class=\"r\">700</td><td class=\"r\">+40</td><td class=\"r\">+10</td>") in html
+    assert "Spreading positions are kept separate and not included in net" in html
 
 
 def test_event_window_has_fixed_offsets_and_actual_dates_only():
@@ -198,8 +199,8 @@ def test_event_interface_marks_user_supplied_event_unverified():
 def test_dashboard_startup_import_and_render_empty_state():
     # Loopback sockets are denied by this sandbox; exercise the production handler renderer.
     body = render_dashboard("missing-dashboard-db.sqlite3", parse_qs("event_date=2025-01-03"))
-    assert "TREASURY FLOW RADAR" in body
-    assert "UNKNOWN" in body
-    assert "Event Study" in body
+    assert "Treasury Flow Radar" in body
+    assert '<span class="unknown">' in body
+    assert "Look at a date" in body and "Live view of the local database" in body
     assert callable(make_server)
 

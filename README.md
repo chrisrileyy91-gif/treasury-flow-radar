@@ -298,14 +298,29 @@ When only maturity is available, estimated duration is explicitly a maturity-yea
 Evidence records distinguish FACT, CALCULATION, OBSERVATION, MECHANISM, INFERENCE, and HYPOTHESIS and carry statements, support, sources, observation dates, and retrieval dates. Confidence is omitted unless a statistical basis is explicitly defined. A calculation or co-movement observation does not by itself establish a mechanism, inference, hypothesis, causality, or manipulation.
 
 
-## Human-readable dashboard and static snapshot
+## The published page (phone URL)
 
-The dashboard begins with **SYSTEM READ**, a concise statement of current measurable yield, curve, dealer, CFTC, Treasury-supply, corporate-issuance, and market-confirmation status. Its labels are derived from source-backed facts or deterministic calculations; it does not score conditions, forecast outcomes, or infer causality.
+The page is published at **https://chrisrileyy91-gif.github.io/treasury-flow-radar/** by the `Publish Treasury Flow Radar` GitHub Actions workflow (`.github/workflows/publish.yml`). It runs every weekday evening (01:17 UTC Tuesday–Saturday, about 9:17 pm Eastern) and can also be started by hand from the repository's Actions tab ("Run workflow").
 
-**WHAT IS HAPPENING?** keeps the first view to the latest 10Y/2Y levels and five/ten-observation changes, 10Y–2Y spread, current dealer position, a compact five-contract CFTC summary, and the latest auction. Expandable participant and event sections retain detailed observations for auditability.
+Each run:
 
-The evidence panel separates available evidence from unavailable evidence, and lists an item as available only when the stored report actually contains it. Treasury-side items (yields, curve, dealer and CFTC positioning, auctions) with no stored observations are shown as **UNAVAILABLE — NO OBSERVATIONS IN DATABASE**. In particular, corporate event-level issuance data, Treasury-futures prices, HYG, IWM, and DXY remain **UNAVAILABLE — NO PRODUCTION FEED CONFIGURED** until a legitimate provider is configured. Missing data are not negative evidence.
+1. Downloads the database from the `database` release of this repository (the file `treasury_flow_radar.sqlite3.gz`). The database is never committed to git.
+2. Ingests all official sources (FRED needs the `FRED_API_KEY` repository secret; the others are public).
+3. Checks the database (`python -m treasury_flow_radar.dbcheck`): it must pass SQLite's integrity check and hold at least as many observations as before. Observations are immutable revisions, so a correct run only adds rows; otherwise the run stops and the stored copy is kept.
+4. Uploads the database plus a dated backup (`treasury_flow_radar-YYYY-MM-DD.sqlite3.gz`), keeping the 14 most recent backups.
+5. Builds the page with `python -m dashboard.export` and deploys it to GitHub Pages.
 
-Static HTML uses the same read-only report calculations as the live dashboard. It is a self-contained snapshot with a generation time; it embeds only a bounded, recent event-detail set and compact provenance rather than the whole research report or database. Individual details include readable market, dealer, CFTC, auction, corporate, confirmation, study, provenance, and limitations sections. Raw structured evidence is available only inside collapsed details panels.
+**The cloud copy is the main database.** To work with it on your own computer, download it first (PowerShell, from the repository folder):
 
-The static export shows the most recent 20 detected events to keep it portable; the live dashboard shows the most recent 60. These limits affect presentation only, not stored observations or report calculations. The snapshot contains no API keys, environment values, credentials, network dependencies, Python dependency, or SQLite dependency.
+```powershell
+gh release download database --pattern treasury_flow_radar.sqlite3.gz --dir data --clobber
+python -c "import gzip,shutil;shutil.copyfileobj(gzip.open('data/treasury_flow_radar.sqlite3.gz'),open('data/treasury_flow_radar.sqlite3','wb'))"
+```
+
+Running ingestion locally afterwards only changes your local copy; the next scheduled run continues from the cloud copy.
+
+### Page layout
+
+The page is one self-contained HTML file (about 90 KB, no external requests) designed for a phone first. Sections answer, in order: *What is happening?* (a deterministic sentence about the last five sessions, the 2/5/7/10/30-year curve now versus 5 and 20 sessions earlier, and the 10-year over about six months), *Dealer positioning* (NY Fed aggregate, weekly), *Futures positioning* (CFTC net contracts for dealers, asset managers and leveraged funds, with every group's long/short/spreading in a collapsed table), *Treasury supply* (recent coupon auctions), *What evidence is missing?* (hatched panels for data that is not stored or has no production feed, and the rate-lock checklist), *Large 10-year moves* (each with a T−5…T+5 table across the curve), *Sources and freshness*, and *How to read this page* (the evidence taxonomy).
+
+Charts are drawn in the browser from a small embedded data block and every chart has a plain table, so the content is readable without JavaScript. No value is estimated or filled; anything absent reads "Unknown". Labels distinguish Fact, Calculation, Observation, and Hypothesis. The published page shows the 20 most recent large moves; the local live dashboard (`python -m dashboard.app`) shows 60 and adds a "Look at a date" form for user-supplied, unverified event dates.

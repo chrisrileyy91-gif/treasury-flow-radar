@@ -137,6 +137,7 @@ def test_empty_database_report_is_read_only_and_export_is_offline(tmp_path):
     assert "<style>" in html and "<script>" in html
     assert not re.search(r"<(?:script|link)[^>]+(?:src|href)=['\"]https?://", html, re.IGNORECASE)
     assert "<form" not in html
+    assert "Static snapshot" in html
     assert "FRED_API_KEY" not in html and "TREASURY_FLOW_RADAR_DB" not in html
     assert len(html.encode("utf-8")) < 1_000_000
 
@@ -152,14 +153,16 @@ def test_compact_dashboard_overview_and_audit_details_are_rendered():
     ]
     report = build_research_report(rows, start_date=date(2025, 9, 1), end_date=date(2025, 10, 2), threshold_bps=1)
     html = render_report(report)
-    assert "SYSTEM READ" in html
-    assert "WHAT IS HAPPENING?" in html
-    assert "EVIDENCE AVAILABLE / NOT AVAILABLE" in html
-    assert "CORPORATE ISSUANCE / RATE-LOCK HYPOTHESIS" in html
-    assert "UNAVAILABLE — NO PRODUCTION FEED CONFIGURED" in html
-    assert "Raw structured evidence" in html
+    for heading in ("What is happening?", "Dealer positioning", "Futures positioning", "Treasury supply",
+                    "What evidence is missing?", "Large 10-year moves", "Sources and freshness"):
+        assert f">{heading}</h" in html
+    # The deterministic curve sentence: both maturities rose over 5 sessions (2y +12, 10y +18).
+    assert "yields rose at every maturity shown" in html
+    assert "The largest move was the <span class=\"nw\">10-year</span> (+18 bp)" in html
+    assert "Production corporate issuance feed unavailable." in html
+    assert "HYG: <strong>Unavailable</strong>" in html
+    assert html.count('<details class="event">') == len(report["events"]) > 1
     assert "id=research-data" not in html
-    assert html.count("<details") > 1
 
 
 def test_compact_cftc_contract_summary_keeps_participant_details_collapsed():
@@ -170,16 +173,15 @@ def test_compact_cftc_contract_summary_keeps_participant_details_collapsed():
     ]
     report = build_research_report(rows, start_date=date(2025, 9, 1), end_date=date(2025, 10, 2), threshold_bps=1)
     html = render_report(report)
-    assert "CFTC positioning — compact contract summary" in html
-    assert "participant details" in html
-    assert "Spreading" in html
-
-
+    futures = _section(html, "Futures positioning")
+    assert '<span class="cell-main">+40</span>' in futures  # dealer net = 120 - 80
+    assert "Long, short, and spreading for every trader group" in futures
+    assert "<th scope=\"col\" class=\"r\">Spreading</th>" in futures
 
 
 def _section(html: str, heading: str) -> str:
-    """Return the HTML of one <section>, located by its <h2> heading."""
-    start = html.index(f"<h2>{heading}</h2>")
+    """Return the HTML of one <section>, located by its heading text."""
+    start = html.index(f">{heading}</h")
     return html[start:html.index("</section>", start)]
 
 
@@ -191,33 +193,32 @@ def _list_after(html: str, h3: str) -> list[str]:
 
 def test_empty_report_lists_no_treasury_evidence_as_available():
     html = render_report(build_research_report([], start_date=date(2026, 10, 1), end_date=date(2026, 10, 1)))
-    evidence = _section(html, "EVIDENCE AVAILABLE / NOT AVAILABLE")
-    assert _list_after(evidence, "Evidence available") == ["None — no Treasury-market observations stored"]
-    missing = " ".join(_list_after(evidence, "Evidence not available"))
+    missing = _section(html, "What evidence is missing?")
+    stored = _list_after(missing, "Treasury-market data not stored")
     for label in ("10Y yield movement", "10Y–2Y curve movement", "Primary dealer positioning",
                   "CFTC positioning", "Treasury auction data"):
-        assert f"{label} — <strong>UNAVAILABLE — NO OBSERVATIONS IN DATABASE</strong>" in missing
-    rate_lock = _section(html, "CORPORATE ISSUANCE / RATE-LOCK HYPOTHESIS")
-    assert "currently holds the Treasury-market side" not in rate_lock
-    assert "even the Treasury side of the hypothesis is incomplete" in rate_lock
+        assert f"{label}: <strong>UNAVAILABLE — NO OBSERVATIONS IN DATABASE</strong>" in stored
+    assert _list_after(missing, "Have") == ["None"]
+    assert "currently holds the Treasury-market side" not in missing
+    assert "even the Treasury side of the hypothesis is incomplete" in missing
+    assert "Not enough yield observations to describe the curve." in html
 
 
 def test_partial_report_lists_only_the_evidence_that_exists():
     rows = [row("DGS10", "2025-10-01", 4.0), row("DGS2", "2025-10-01", 3.5),
             row("DGS10", "2025-10-02", 4.1), row("DGS2", "2025-10-02", 3.6)]
     html = render_report(build_research_report(rows, start_date=date(2025, 10, 1), end_date=date(2025, 10, 2)))
-    evidence = _section(html, "EVIDENCE AVAILABLE / NOT AVAILABLE")
-    assert _list_after(evidence, "Evidence available") == ["10Y yield movement", "10Y–2Y curve movement"]
-    missing = " ".join(_list_after(evidence, "Evidence not available"))
-    assert "Primary dealer positioning — <strong>UNAVAILABLE — NO OBSERVATIONS IN DATABASE" in missing
-    assert "HYG — <strong>UNAVAILABLE — NO PRODUCTION FEED CONFIGURED" in missing
+    stored = " ".join(_list_after(_section(html, "What evidence is missing?"), "Treasury-market data not stored"))
+    assert "Primary dealer positioning: <strong>UNAVAILABLE — NO OBSERVATIONS IN DATABASE" in stored
+    assert "Treasury auction data" in stored
+    assert "10Y yield movement" not in stored and "10Y–2Y curve movement" not in stored
+    assert "HYG: <strong>Unavailable</strong>" in html
 
 
-def test_status_badges_are_rendered_as_markup_not_escaped_text():
+def test_status_text_is_rendered_as_markup_not_escaped_text():
     html = render_report(build_research_report([], start_date=date(2026, 10, 1), end_date=date(2026, 10, 1)))
-    rate_lock = _section(html, "CORPORATE ISSUANCE / RATE-LOCK HYPOTHESIS")
-    assert "&lt;span" not in html
-    assert '<td><span class="status unavailable">UNAVAILABLE</span></td>' in rate_lock
+    assert "&lt;span" not in html and "&lt;strong" not in html
+    assert '<span class="unknown">' in html
 
 
 def test_live_and_static_modes_describe_themselves_accurately():

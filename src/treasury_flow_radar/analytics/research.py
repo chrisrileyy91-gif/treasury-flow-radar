@@ -15,7 +15,7 @@ from treasury_flow_radar.analytics.descriptive import (
     positioning_metrics,
     yield_metrics,
 )
-from treasury_flow_radar.analytics.event_study import MARKET_SERIES, event_study
+from treasury_flow_radar.analytics.event_study import MARKET_SERIES, YIELD_SERIES, event_study
 from treasury_flow_radar.analytics.evidence import evidence_from_rows
 from treasury_flow_radar.analytics.issuance import analyze_issuance_event
 from treasury_flow_radar.analytics.temporal import align_observation
@@ -101,6 +101,8 @@ def build_research_report(
                 "daily_change_bps": m.daily_change_bps,
                 "change_5_observations_bps": m.change_5_observations_bps,
                 "change_10_observations_bps": m.change_10_observations_bps,
+                "change_20_observations_bps": m.change_20_observations_bps,
+                "skipped_no_value_dates": [d.isoformat() for d in m.skipped_no_value_dates],
                 "rolling_volatility_5_bps": m.rolling_volatility_5_bps,
                 "evidence_type": EvidenceType.CALCULATION.value,
             }
@@ -151,6 +153,11 @@ def build_research_report(
         dealer_context[series] = contexts
 
     cftc_rows = [r for r in source_rows if r.get("source_identifier") == "CFTC"]
+    # Index CFTC rows by (series, report date) once; provenance lookups then scan only
+    # that report's rows instead of every CFTC row. Results are unchanged.
+    cftc_index: dict[tuple[str, date], list[dict[str, Any]]] = defaultdict(list)
+    for r in cftc_rows:
+        cftc_index[(r.get("series_identifier"), date.fromisoformat(str(r["observation_time"])[:10]))].append(r)
     cftc_metrics = positioning_metrics([Observation.from_mapping(r) for r in cftc_rows])
     grouped_cftc: dict[tuple[str, date], dict[str, Any]] = {}
     for metric in cftc_metrics:
@@ -163,7 +170,8 @@ def build_research_report(
         metrics.sort(key=lambda item: item.observation_time)
         latest = metrics[-1]
         previous = metrics[-2] if len(metrics) > 1 else None
-        provenance_row = _provenance_for_key(cftc_rows, series, latest.observation_time, participant)
+        provenance_row = _provenance_for_key(cftc_index.get((series, latest.observation_time), []),
+                                             series, latest.observation_time, participant)
         series_source = next((r for r in cftc_rows if r.get("series_identifier") == series), {})
         cftc_summaries.append({
             "contract": series_source.get("series_name") or series,
@@ -216,7 +224,7 @@ def build_research_report(
                         "net_evidence_type": EvidenceType.CALCULATION.value,
                         "evidence_type": EvidenceType.FACT.value,
                         "provenance": _provenance_for_key(
-                            cftc_rows, series, report_day, p
+                            cftc_index.get((series, report_day), []), series, report_day, p
                         ),
                     }
                     for p, m in sorted(participants.items())
@@ -278,12 +286,17 @@ def build_research_report(
             support,
         ).to_dict())
 
+    # The event study reads only yield and market-price series; passing just those rows
+    # (instead of every positioning/auction row) gives identical windows far faster.
+    study_series = {*YIELD_SERIES, *MARKET_SERIES}
+    study_rows = [r for r in source_rows
+                  if str(r.get("series_identifier") or "").upper() in study_series]
     event_summaries = []
     for event in moves:
         day = date.fromisoformat(event["event_date"])
         two = yield_by_series_day["DGS2"].get(day)
         curve = curve_by_day.get(day)
-        study = event_study(day, source_rows)
+        study = event_study(day, study_rows)
         nearby_issuance = []
         for issuance in issuance_analytics:
             issuance_date = _issuance_anchor(issuance)
@@ -353,6 +366,9 @@ def build_research_report(
             "evidence_type": EvidenceType.FACT.value,
             "change_evidence_type": EvidenceType.CALCULATION.value,
             "provenance": _provenance_for_date(dealer_rows, latest.observation_time),
+            # Reported weekly values in the report range, for charting; never filled.
+            "history": [{"observation_date": m.observation_time.isoformat(), "position": m.value}
+                        for m in series_metrics if start_date <= m.observation_time <= end_date],
         })
     for series_id, metrics in yields.items():
         latest = next((m for m in reversed(metrics) if m.yield_percent is not None), None)
@@ -406,18 +422,24 @@ def build_research_report(
             f"Treasury auction {auction.get('security_term')} {auction.get('security_type')} occurred on {auction['auction_date']}.",
             support,
         ).to_dict())
+    # Per source: the most recent retrieval and, separately, the most recent observation
+    # date that carries a value. (Previously the observation date was taken from whichever
+    # row had the latest retrieval time, which could be the oldest observation.)
     latest_retrieval: dict[str, dict[str, str | None]] = {}
     for row in source_rows:
         source = str(row.get("source_identifier") or "")
+        if not source:
+            continue
+        entry = latest_retrieval.setdefault(
+            source, {"retrieval_time": None, "observation_date": None, "publication_time": None})
         retrieval = str(row.get("retrieval_time") or "")
-        if source and retrieval and retrieval > str(
-            latest_retrieval.get(source, {}).get("retrieval_time") or ""
-        ):
-            latest_retrieval[source] = {
-                "retrieval_time": retrieval,
-                "observation_date": str(row.get("observation_time") or "")[:10] or None,
-                "publication_time": row.get("publication_time"),
-            }
+        if retrieval and retrieval > str(entry["retrieval_time"] or ""):
+            entry["retrieval_time"] = retrieval
+            entry["publication_time"] = row.get("publication_time")
+        observed = str(row.get("observation_time") or "")[:10]
+        has_value = row.get("value_numeric") is not None or row.get("value_text") is not None
+        if observed and has_value and observed > str(entry["observation_date"] or ""):
+            entry["observation_date"] = observed
     return {
         "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
