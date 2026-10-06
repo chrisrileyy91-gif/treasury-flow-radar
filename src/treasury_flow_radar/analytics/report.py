@@ -21,11 +21,18 @@ def load_observations_read_only(database_path: str | Path) -> list[dict[str, obj
     connection = sqlite3.connect(uri, uri=True)
     connection.row_factory = sqlite3.Row
     try:
+        existing = {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+        if not {"observations", "sources", "series"}.issubset(existing):
+            return []
         rows = connection.execute(
             """SELECT o.id AS observation_id, o.source_id, o.series_id,
-                      s.identifier AS source_identifier, s.url AS source_url,
+                      s.identifier AS source_identifier, s.name AS source_name,
+                      s.source_type, s.url AS source_url, s.metadata_json AS source_metadata_json,
                       se.identifier AS series_identifier, se.name AS series_name,
-                      se.frequency AS series_frequency, o.logical_key, o.revision,
+                      se.frequency AS series_frequency, se.frequency AS frequency,
+                      se.default_unit, o.logical_key, o.revision,
                       o.observation_time, o.publication_time, o.retrieval_time,
                       o.value_numeric, o.value_text, o.unit, o.raw_value,
                       o.raw_record_id, o.metadata_json
@@ -43,6 +50,7 @@ def load_observations_read_only(database_path: str | Path) -> list[dict[str, obj
         for row in rows:
             item = dict(row)
             item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+            item["source_metadata"] = json.loads(item.pop("source_metadata_json") or "{}")
             result.append(item)
         return result
     finally:

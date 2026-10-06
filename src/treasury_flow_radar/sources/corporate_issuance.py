@@ -28,7 +28,7 @@ from treasury_flow_radar.database import (
 
 SOURCE_ID = "corporate_issuance_provider_neutral"
 SERIES_ID = "corporate_issuance_tranche"
-DATE_FIELDS = {"maturity_date", "pricing_date", "settlement_date"}
+DATE_FIELDS = {"announcement_date", "maturity_date", "pricing_date", "settlement_date"}
 TEXT_FIELDS = {
     "issuer_name",
     "issuer_identifier",
@@ -38,13 +38,14 @@ TEXT_FIELDS = {
     "currency",
     "benchmark_maturity",
     "rating",
+    "credit_classification",
     "sector",
     "callable_flag",
     "issuance_type",
     "source_native_security_type",
     "source_native_term",
 }
-NUMERIC_FIELDS = {"principal_amount", "coupon", "yield", "spread"}
+NUMERIC_FIELDS = {"principal_amount", "coupon", "yield", "spread", "benchmark_yield", "credit_spread"}
 NORMALIZED_FIELDS = TEXT_FIELDS | NUMERIC_FIELDS | DATE_FIELDS
 MISSING = {"", "NA", "N/A", "NULL", "NONE"}
 
@@ -157,6 +158,16 @@ def normalize_record(record: Mapping[str, Any]) -> IssuanceTranche:
                 val = "false"
             else:
                 raise CorporateIssuanceError("callable_flag must be boolean-like or null")
+        if field == "credit_classification" and val is not None:
+            folded = val.casefold().replace("-", "_").replace(" ", "_")
+            if folded in {"ig", "investment_grade"}:
+                val = "investment_grade"
+            elif folded in {"hy", "high_yield"}:
+                val = "high_yield"
+            else:
+                raise CorporateIssuanceError(
+                    "credit_classification must be investment_grade, high_yield, or null"
+                )
         fields[field] = val
     for field in DATE_FIELDS:
         fields[field] = _date(record.get(field), field)
@@ -259,6 +270,7 @@ def ingest_corporate_issuance_pages(
     source_identifier: str = SOURCE_ID,
     source_name: str = "Corporate issuance structured provider (adapter boundary)",
     source_url: str | None = None,
+    production_source_configured: bool = False,
     retrieved_at: datetime | None = None,
 ) -> dict[str, int]:
     """Validate complete structured pages, then persist normalized tranche facts.
@@ -299,6 +311,12 @@ def ingest_corporate_issuance_pages(
             f"pagination row count mismatch: expected {total}, received {len(identities)} unique records"
         )
     now = retrieved_at or datetime.now(UTC)
+    if production_source_configured and (
+        source_identifier == SOURCE_ID or not source_url
+    ):
+        raise CorporateIssuanceError(
+            "a configured production source requires a provider-specific identifier and URL"
+        )
     if now.utcoffset() is None:
         raise CorporateIssuanceError("retrieved_at must be timezone-aware")
     now = now.astimezone(UTC)
@@ -313,7 +331,7 @@ def ingest_corporate_issuance_pages(
             source_type="corporate_bond_issuance",
             url=source_url,
             metadata={
-                "event_level_source_selected": False,
+                "event_level_source_selected": production_source_configured,
                 "adapter_contract": "provider_neutral_v1",
             },
         )
@@ -361,8 +379,10 @@ def ingest_corporate_issuance_pages(
                             if field == "principal_amount"
                             else "percent"
                             if field in {"coupon", "yield"}
+                            else "percent"
+                            if field == "benchmark_yield"
                             else "source_native"
-                            if field == "spread"
+                            if field in {"spread", "credit_spread"}
                             else None
                         )
                         values[field] = (raw, numeric, unit)

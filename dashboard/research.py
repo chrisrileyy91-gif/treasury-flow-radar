@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from statistics import fmean, median
 from typing import Any
+
+from treasury_flow_radar.analytics.descriptive import EvidenceType
+from treasury_flow_radar.analytics.event_study import event_study
+from treasury_flow_radar.analytics.evidence import evidence_from_rows
+from treasury_flow_radar.analytics.report import load_observations_read_only
 
 
 @dataclass(frozen=True)
@@ -49,55 +53,18 @@ def classify_freshness(
 
 
 def load_observations(database_path: str | Path) -> list[dict[str, Any]]:
-    """Read latest immutable revisions from an existing project DB; never creates it."""
+    """Compatibility projection backed by the shared read-only analytics loader."""
     path = Path(database_path)
     if not path.is_file():
         return []
-    uri = f"file:{path.resolve().as_posix()}?mode=ro"
     try:
-        connection = sqlite3.connect(uri, uri=True)
-    except sqlite3.Error:
+        rows = load_observations_read_only(path)
+    except (OSError, ValueError):
         return []
-    connection.row_factory = sqlite3.Row
-    try:
-        required = {"sources", "series", "observations"}
-        existing = {
-            row[0]
-            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-        if not required.issubset(existing):
-            return []
-        query = """
-        SELECT o.id, o.source_id, o.series_id, s.identifier AS source_identifier,
-               s.name AS source_name, s.url AS source_url, se.identifier AS series_identifier,
-               se.name AS series_name, se.frequency, se.default_unit,
-               o.logical_key, o.revision, o.observation_time, o.publication_time,
-               o.retrieval_time, o.value_numeric, o.value_text, o.raw_value, o.unit,
-               o.raw_record_id, o.metadata_json
-        FROM observations o
-        JOIN sources s ON s.id=o.source_id
-        JOIN series se ON se.id=o.series_id
-        WHERE o.revision=(SELECT MAX(latest.revision) FROM observations latest
-          WHERE latest.source_id=o.source_id AND latest.series_id=o.series_id
-            AND latest.logical_key=o.logical_key)
-        ORDER BY o.observation_time, o.id
-        """
-        rows = []
-        import json
-
-        for row in connection.execute(query):
-            item = dict(row)
-            try:
-                item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
-            except (TypeError, ValueError):
-                item["metadata"] = {}
-            item["freshness"] = classify_freshness(item["retrieval_time"], item["frequency"])
-            rows.append(item)
-        return rows
-    except sqlite3.Error:
-        return []
-    finally:
-        connection.close()
+    for row in rows:
+        row["id"] = row.get("observation_id")
+        row["freshness"] = classify_freshness(row.get("retrieval_time"), row.get("frequency"))
+    return rows
 
 
 def evidence_summary(observations: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
@@ -112,73 +79,51 @@ def evidence_summary(observations: Iterable[dict[str, Any]]) -> list[dict[str, s
         usable = [r for r in series if r["value_numeric"] is not None]
         if usable:
             latest = usable[-1]
-            output.append({"type": "FACT", "text": (
+            fact = evidence_from_rows(EvidenceType.FACT, (
                 f"{identifier} reported {latest['value_numeric']:g} {latest['unit'] or latest['default_unit'] or ''} "
                 f"on {latest['observation_time'][:10]} ({latest['source_name']})."
-            ).strip()})
+            ).strip(), [latest])
+            output.append({"type": fact.evidence_type.value, "text": fact.statement,
+                           **{k: v for k, v in fact.to_dict().items() if k not in {"evidence_type", "statement"}}})
             if len(usable) > 1:
-                delta = (latest["value_numeric"] - usable[-2]["value_numeric"]) * 100
+                prior = usable[-2]
+                delta = (latest["value_numeric"] - prior["value_numeric"]) * 100
                 direction = "rose" if delta > 0 else "fell" if delta < 0 else "was unchanged"
-                output.append({"type": "CALCULATION", "text": (
+                calc = evidence_from_rows(EvidenceType.CALCULATION, (
                     f"{identifier} {direction} {abs(delta):g} basis points between the latest two supplied observations."
-                )})
-    output.append({"type": "MECHANISM", "text": (
-        "Dealer hedging can transmit temporary duration exposure into Treasury cash or futures markets; this is a possible mechanism, not a finding about a particular move."
-    )})
-    output.append({"type": "HYPOTHESIS", "text": (
-        "Corporate issuance may create temporary rate exposure and hedging pressure around pricing or settlement; event-level production data are unavailable, so this remains untested here."
-    )})
+                ), [prior, latest])
+                output.append({"type": calc.evidence_type.value, "text": calc.statement,
+                               **{k: v for k, v in calc.to_dict().items() if k not in {"evidence_type", "statement"}}})
+    for category, statement in (
+        (EvidenceType.MECHANISM, "Dealer hedging can transmit temporary duration exposure into Treasury cash or futures markets; this is a possible mechanism, not a finding about a particular move."),
+        (EvidenceType.HYPOTHESIS, "Corporate issuance may create temporary rate exposure and hedging pressure around pricing or settlement; event-level production data are unavailable, so this remains untested here."),
+    ):
+        record = evidence_from_rows(category, statement, [])
+        output.append({"type": record.evidence_type.value, "text": record.statement,
+                       **{k: v for k, v in record.to_dict().items() if k not in {"evidence_type", "statement"}}})
     return output
 
 
 def build_event_window(event: Event, observations: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Align to actual Treasury yield observation dates, retaining missing T0 and sparse sources."""
+    """Compatibility view over the shared observation-order event-study engine."""
     rows = list(observations)
-    yield_dates = sorted({
-        date.fromisoformat(r["observation_time"][:10])
-        for r in rows
-        if r["series_identifier"].upper() in {"DGS2", "DGS10"}
-    })
-    before = [d for d in yield_dates if d < event.event_date][-5:]
-    after = [d for d in yield_dates if d > event.event_date][:5]
-    aligned = {offset: day for offset, day in zip(range(-len(before), 0), before, strict=True)}
-    aligned[0] = event.event_date
-    aligned.update({offset: day for offset, day in zip(range(1, len(after) + 1), after, strict=True)})
+    study = event_study(event.event_date, rows)
     output = []
-    for offset in range(-5, 6):
-        day = aligned.get(offset)
-        if day is None:
-            output.append({"offset": offset, "date": None, "yield_2y": None, "yield_10y": None,
-                           "curve_bps": None, "yield_2y_change_bps": None,
-                           "yield_10y_change_bps": None, "cftc": [], "nyfed": [],
-                           "auctions": [], "prices": []})
-            continue
-        dayrows = [r for r in rows if r["observation_time"][:10] == day.isoformat()]
-        values: dict[str, Any] = {}
-        for r in dayrows:
-            key = r["series_identifier"].upper()
-            if key in {"DGS2", "DGS10"} and r["value_numeric"] is not None:
-                values[key] = r["value_numeric"]
-        dgs2, dgs10 = values.get("DGS2"), values.get("DGS10")
-        cftc = [r for r in dayrows if "cftc" in r["source_identifier"].lower()]
-        nyfed = [r for r in dayrows if "nyfed" in r["source_identifier"].lower() or "dealer" in r["source_name"].lower()]
-        auctions = [r for r in dayrows if "auction" in r["source_identifier"].lower()]
-        prices = [r for r in dayrows if r["series_identifier"].upper() in {"HYG", "IWM", "DXY", "ZN", "UB", "ZB"}]
+    for point in study["windows"]["T-5_T+5"]:
+        day = point["source_observation_date"]
+        dayrows = [r for r in rows if day and str(r["observation_time"])[:10] == day]
         output.append({
-            "offset": offset, "date": day.isoformat(), "yield_2y": dgs2, "yield_10y": dgs10,
-            "curve_bps": None if dgs2 is None or dgs10 is None else (dgs10 - dgs2) * 100,
-            "yield_2y_change_bps": None, "yield_10y_change_bps": None,
-            "cftc": cftc, "nyfed": nyfed, "auctions": auctions, "prices": prices,
+            "offset": point["offset"], "date": day,
+            "yield_2y": point["dgs2_percent"], "yield_10y": point["dgs10_percent"],
+            "curve_bps": point["spread_bps"],
+            "yield_2y_change_bps": point["dgs2_change_bps"],
+            "yield_10y_change_bps": point["dgs10_change_bps"],
+            "cftc": [r for r in dayrows if "cftc" in str(r.get("source_identifier", "")).lower()],
+            "nyfed": [r for r in dayrows if "nyfed" in str(r.get("source_identifier", "")).lower()
+                      or "dealer" in str(r.get("source_name", "")).lower()],
+            "auctions": [r for r in dayrows if "auction" in str(r.get("source_identifier", "")).lower()],
+            "prices": [r for r in dayrows if str(r["series_identifier"]).upper() in {"HYG", "IWM", "DXY", "ZN", "UB", "ZB"}],
         })
-    baseline = next((row for row in output if row["offset"] == -1), None)
-    if baseline:
-        for row in output:
-            for maturity in ("2y", "10y"):
-                current, prior = row[f"yield_{maturity}"], baseline[f"yield_{maturity}"]
-                row[f"yield_{maturity}_change_bps"] = (
-                    None if current is None or prior is None else (current - prior) * 100
-                )
-    # Window dates are observation-order offsets. Missing dates are not fabricated.
     return output
 
 

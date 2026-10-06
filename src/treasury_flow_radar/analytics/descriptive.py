@@ -317,6 +317,12 @@ _POSITION_NAMES = {
     "asset_manager_institutional": "asset_manager",
     "asset manager": "asset_manager",
     "asset_mgr": "asset_manager",
+    "other_reportables": "other_reportable",
+    "other reportables": "other_reportable",
+    "other_reportable": "other_reportable",
+    "nonreportable": "nonreportable",
+    "non_reportable": "nonreportable",
+    "non-reportable": "nonreportable",
 }
 
 

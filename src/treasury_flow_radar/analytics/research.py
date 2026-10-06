@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 from treasury_flow_radar.analytics.descriptive import (
@@ -15,6 +15,10 @@ from treasury_flow_radar.analytics.descriptive import (
     positioning_metrics,
     yield_metrics,
 )
+from treasury_flow_radar.analytics.event_study import MARKET_SERIES, event_study
+from treasury_flow_radar.analytics.evidence import evidence_from_rows
+from treasury_flow_radar.analytics.issuance import analyze_issuance_event
+from treasury_flow_radar.analytics.temporal import align_observation
 
 
 def large_yield_moves(
@@ -111,12 +115,13 @@ def build_research_report(
         contexts = []
         for event in moves:
             event_day = date.fromisoformat(event["event_date"])
-            eligible = [day for day in indexed if day <= event_day]
-            if not eligible:
+            match = align_observation(series_obs, event_day, direction="prior")
+            if match is None:
                 contexts.append({"event_date": event["event_date"], "position": None})
                 continue
-            latest_day = max(eligible)
+            latest_day = match.source_observation_date
             latest = indexed[latest_day]
+            eligible = [day for day in indexed if day <= event_day]
             prior_candidates = [day for day in eligible if day < latest_day]
             prior_day = max(prior_candidates) if prior_candidates else None
             prior = indexed[prior_day] if prior_day else None
@@ -126,11 +131,13 @@ def build_research_report(
                 "unit": latest.unit,
                 "reporting_frequency": latest.frequency,
                 "observation_date": latest_day.isoformat(),
+                "lag_days": match.lag_days,
+                "temporal_relationship": match.relationship,
                 "prior_position": prior.value if prior else None,
                 "prior_observation_date": prior_day.isoformat() if prior_day else None,
                 "change_from_prior_observation": latest.change_from_prior,
                 "change_evidence_type": EvidenceType.CALCULATION.value,
-                "temporal_relationship": "latest observation on or before event; weekly observations are not forward-filled",
+                "alignment_rule": "latest observation on or before event; weekly observations are not forward-filled",
                 "availability_note": "source does not provide an exact historical publication time; date alignment alone does not establish that the weekly value was published by the event",
                 "evidence_type": EvidenceType.FACT.value,
                 "provenance": _provenance_for_date(dealer_rows, latest_day),
@@ -142,6 +149,36 @@ def build_research_report(
     grouped_cftc: dict[tuple[str, date], dict[str, Any]] = {}
     for metric in cftc_metrics:
         grouped_cftc.setdefault((metric.series_id, metric.observation_time), {})[metric.participant] = metric
+    cftc_summaries = []
+    cftc_grouped: dict[tuple[str, str], list[Any]] = defaultdict(list)
+    for metric in cftc_metrics:
+        cftc_grouped[(metric.series_id, metric.participant)].append(metric)
+    for (series, participant), metrics in sorted(cftc_grouped.items()):
+        metrics.sort(key=lambda item: item.observation_time)
+        latest = metrics[-1]
+        previous = metrics[-2] if len(metrics) > 1 else None
+        provenance_row = _provenance_for_key(cftc_rows, series, latest.observation_time, participant)
+        series_source = next((r for r in cftc_rows if r.get("series_identifier") == series), {})
+        cftc_summaries.append({
+            "contract": series_source.get("series_name") or series,
+            "series_identifier": series,
+            "participant_category": participant,
+            "long": latest.long_contracts,
+            "short": latest.short_contracts,
+            "spreading": latest.spreading_contracts,
+            "net": latest.net_position_contracts,
+            "net_change": latest.net_change_contracts,
+            "previous_net": previous.net_position_contracts if previous else None,
+            "positioning_date": latest.observation_time.isoformat(),
+            "reporting_frequency": latest.reporting_frequency,
+            "temporal_relationship": "SOURCE OBSERVATION DATE",
+            "source_observation_date": latest.observation_time.isoformat(),
+            "event_date": None,
+            "lag_days": None,
+            "evidence_type": EvidenceType.FACT.value,
+            "net_evidence_type": EvidenceType.CALCULATION.value,
+            "provenance": provenance_row,
+        })
     cftc_context = []
     for event in moves:
         event_day = date.fromisoformat(event["event_date"])
@@ -158,6 +195,7 @@ def build_research_report(
                 "series_identifier": series,
                 "positioning_date": report_day.isoformat(),
                 "days_before_event": (event_day - report_day).days,
+                "temporal_relationship": "BEFORE" if report_day < event_day else "SAME_DAY",
                 "evidence_type": EvidenceType.FACT.value,
                 "lag_evidence_type": EvidenceType.CALCULATION.value,
                 "reporting_frequency": "weekly",
@@ -192,14 +230,69 @@ def build_research_report(
             "event_date": event["event_date"],
             "window_calendar_days": auction_window_days,
             "evidence_type": EvidenceType.OBSERVATION.value,
-            "auctions": selected,
+            "auctions": [
+                {**a, "temporal_alignment": {
+                    "source_observation_date": a["auction_date"],
+                    "event_date": event["event_date"],
+                    "lag_days": (event_day - date.fromisoformat(a["auction_date"])).days,
+                    "relationship": (
+                        "BEFORE" if date.fromisoformat(a["auction_date"]) < event_day
+                        else "AFTER" if date.fromisoformat(a["auction_date"]) > event_day
+                        else "SAME_DAY"
+                    ),
+                }} for a in selected
+            ],
         })
+
+    corporate_rows = [r for r in source_rows
+                      if "corporate" in str(r.get("source_type", "")).casefold()
+                      or "corporate_issuance" in str(r.get("source_identifier", "")).casefold()]
+    corporate_events = _corporate_events(corporate_rows)
+    corporate_configured = any(
+        bool((r.get("source_metadata") or {}).get("event_level_source_selected"))
+        for r in corporate_rows
+    )
+    corporate_status = ("AVAILABLE" if corporate_configured and corporate_events
+                        else "Corporate issuance event feed not configured")
+    selected_issuance_events = [item for item in corporate_events
+                                if item.get("production_source_configured")]
+    issuance_analytics = [analyze_issuance_event(item, observations)
+                          for item in selected_issuance_events]
+
+    market_summary = _market_confirmation(source_rows)
+    evidence_records = []
+    for move in moves:
+        event_day = date.fromisoformat(move["event_date"])
+        prior_day = date.fromisoformat(move["prior_observation_date"])
+        support = [r for r in source_rows if r.get("series_identifier", "").upper() == "DGS10"
+                   and date.fromisoformat(str(r["observation_time"])[:10]) in {prior_day, event_day}]
+        evidence_records.append(evidence_from_rows(
+            EvidenceType.OBSERVATION,
+            f"A DGS10 change of {move['change_bps']:.6g} basis points was observed on {event_day.isoformat()}.",
+            support,
+        ).to_dict())
 
     event_summaries = []
     for event in moves:
         day = date.fromisoformat(event["event_date"])
         two = yield_by_series_day["DGS2"].get(day)
         curve = curve_by_day.get(day)
+        study = event_study(day, source_rows)
+        nearby_issuance = []
+        for issuance in issuance_analytics:
+            issuance_date = _issuance_anchor(issuance)
+            if issuance_date is None or abs((day - issuance_date).days) > 5:
+                continue
+            nearby_issuance.append({
+                **issuance,
+                "temporal_alignment": {
+                    "source_observation_date": issuance_date.isoformat(),
+                    "event_date": day.isoformat(),
+                    "lag_days": (day - issuance_date).days,
+                    "relationship": ("BEFORE" if issuance_date < day else
+                                     "AFTER" if issuance_date > day else "SAME_DAY"),
+                },
+            })
         event_summaries.append({
             "event": {
                 **event,
@@ -216,14 +309,112 @@ def build_research_report(
             },
             "cftc_context": next(c for c in cftc_context if c["event_date"] == event["event_date"]),
             "auction_context": next(c for c in auction_context if c["event_date"] == event["event_date"]),
+            "event_study": study,
+            "market_confirmation": study["market_confirmation"],
+            "corporate_issuance_context": {
+                "status": corporate_status,
+                "events": nearby_issuance,
+            },
         })
 
     provenance = sorted({
         (str(r.get("source_identifier") or ""), str(r.get("source_url") or ""),
          str(r.get("series_identifier") or "")) for r in source_rows
     })
+    dealer_summaries = []
+    for series in dealer_series:
+        series_metrics = level_changes([o for o in observations if o.series_id == series], series)
+        if not series_metrics:
+            continue
+        latest = series_metrics[-1]
+        prior = series_metrics[-2] if len(series_metrics) > 1 else None
+        matching = next((r for r in dealer_rows
+                         if r.get("series_identifier") == series
+                         and date.fromisoformat(str(r["observation_time"])[:10]) == latest.observation_time), None)
+        dealer_summaries.append({
+            "series_identifier": series,
+            "series_name": (matching or {}).get("series_name") or series,
+            "position": latest.value,
+            "previous_position": prior.value if prior else None,
+            "change": latest.change_from_prior,
+            "unit": latest.unit,
+            "observation_date": latest.observation_time.isoformat(),
+            "reporting_frequency": latest.frequency,
+            "source_observation_date": latest.observation_time.isoformat(),
+            "event_date": None,
+            "lag_days": None,
+            "temporal_relationship": "SOURCE OBSERVATION DATE",
+            "evidence_type": EvidenceType.FACT.value,
+            "change_evidence_type": EvidenceType.CALCULATION.value,
+            "provenance": _provenance_for_date(dealer_rows, latest.observation_time),
+        })
+    for series_id, metrics in yields.items():
+        latest = next((m for m in reversed(metrics) if m.yield_percent is not None), None)
+        if latest is None:
+            continue
+        support = [r for r in source_rows if r.get("series_identifier") == series_id
+                   and date.fromisoformat(str(r["observation_time"])[:10]) == latest.observation_time]
+        evidence_records.append(evidence_from_rows(
+            EvidenceType.FACT,
+            f"{series_id} was reported at {latest.yield_percent:.6g} percent on {latest.observation_time.isoformat()}.",
+            support,
+        ).to_dict())
+    for dealer in dealer_summaries:
+        evidence_records.append(evidence_from_rows(
+            EvidenceType.FACT,
+            f"NY Fed dealer position for {dealer['series_name']} was {dealer['position']} {dealer['unit']} on {dealer['observation_date']}.",
+            [r for r in dealer_rows if r.get("series_identifier") == dealer["series_identifier"]
+             and str(r.get("observation_time", ""))[:10] == dealer["observation_date"]],
+        ).to_dict())
+    category_aliases = {
+        "dealer": {"dealer", "dealer_intermediary", "dealer/intermediary"},
+        "asset_manager": {"asset_manager", "asset_manager_institutional", "asset manager"},
+        "leveraged_fund": {"leveraged_funds", "leveraged fund", "lev_money"},
+        "other_reportable": {"other_reportables", "other reportables"},
+        "nonreportable": {"nonreportable", "non_reportable"},
+    }
+    for position in cftc_summaries:
+        categories = category_aliases.get(position["participant_category"],
+                                          {position["participant_category"]})
+        support = [r for r in cftc_rows
+                   if r.get("series_identifier") == position["series_identifier"]
+                   and str(r.get("observation_time", ""))[:10] == position["positioning_date"]
+                   and str((r.get("metadata") or {}).get("participant_category", "")).casefold()
+                   in categories]
+        evidence_records.append(evidence_from_rows(
+            EvidenceType.FACT,
+            f"CFTC {position['contract']} {position['participant_category']} report dated {position['positioning_date']}: long {position['long']}, short {position['short']}, spreading {position['spreading']} contracts.",
+            support,
+        ).to_dict())
+        if position["net"] is not None:
+            evidence_records.append(evidence_from_rows(
+                EvidenceType.CALCULATION,
+                f"CFTC outright net position was {position['net']} contracts (long minus short); spreading is excluded.",
+                support,
+            ).to_dict())
+    for auction in auctions[-30:]:
+        auction_id = (auction.get("provenance") or {}).get("source_record_id")
+        support = [r for r in auction_rows if (r.get("metadata") or {}).get("source_identifier") == auction_id]
+        evidence_records.append(evidence_from_rows(
+            EvidenceType.FACT,
+            f"Treasury auction {auction.get('security_term')} {auction.get('security_type')} occurred on {auction['auction_date']}.",
+            support,
+        ).to_dict())
+    latest_retrieval: dict[str, dict[str, str | None]] = {}
+    for row in source_rows:
+        source = str(row.get("source_identifier") or "")
+        retrieval = str(row.get("retrieval_time") or "")
+        if source and retrieval and retrieval > str(
+            latest_retrieval.get(source, {}).get("retrieval_time") or ""
+        ):
+            latest_retrieval[source] = {
+                "retrieval_time": retrieval,
+                "observation_date": str(row.get("observation_time") or "")[:10] or None,
+                "publication_time": row.get("publication_time"),
+            }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "generated_at": datetime.now(UTC).isoformat(),
         "scope": {"start_date": start_date.isoformat(), "end_date": end_date.isoformat()},
         "method": {
             "yield_event_series": "DGS10",
@@ -244,12 +435,109 @@ def build_research_report(
             for m in curves if start_date <= m.observation_time <= end_date
         ],
         "events": event_summaries,
+        "dealer_positions": dealer_summaries,
+        "cftc_positions": cftc_summaries,
+        "treasury_auctions": auctions,
+        "event_study_windows": ["T-5 through T+5", "T-3 through T+3", "T-1 through T+1"],
+        "market_confirmation": market_summary,
+        "corporate_issuance": {
+            "status": corporate_status,
+            "events": issuance_analytics,
+            "source_feed_configured": corporate_configured,
+        },
+        "evidence": evidence_records,
+        "availability": {
+            "corporate_issuance": corporate_status,
+            "market_confirmation": market_summary["status"],
+            "NYFED": "AVAILABLE" if dealer_summaries else "UNAVAILABLE",
+            "CFTC": "AVAILABLE" if cftc_summaries else "UNAVAILABLE",
+            "Treasury auctions": "AVAILABLE" if auctions else "UNAVAILABLE",
+            "FRED yields": "AVAILABLE" if any(yields.values()) else "UNAVAILABLE",
+        },
+        "data_freshness": latest_retrieval,
         "source_provenance": [
             {"source_identifier": s, "source_url": url, "series_identifier": series}
             for s, url, series in provenance
         ],
         "evidence_taxonomy": [e.value for e in EvidenceType],
         "interpretation_limit": "Descriptive measurements only; timing and co-occurrence do not establish causality or intent.",
+    }
+
+
+def _corporate_events(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    events: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        metadata = row.get("metadata") or {}
+        record_id = str(metadata.get("source_record_id") or "")
+        fields = metadata.get("issuance_event")
+        if not record_id or not isinstance(fields, dict):
+            continue
+        events.setdefault(record_id, {
+            "source_record_id": record_id,
+            "fields": fields,
+            "duration_method": metadata.get("duration_method"),
+            "duration_kind": metadata.get("duration_classification"),
+            "source_identifier": row.get("source_identifier"),
+            "source_url": row.get("source_url"),
+            "publication_time": row.get("publication_time"),
+            "retrieval_time": row.get("retrieval_time"),
+            "raw_record_id": row.get("raw_record_id"),
+            "production_source_configured": bool(
+                (row.get("source_metadata") or {}).get("event_level_source_selected")
+            ),
+        })
+        if metadata.get("source_field") == "duration_years_estimate":
+            events[record_id]["duration_years"] = row.get("value_numeric")
+    return [events[key] for key in sorted(events)]
+
+
+def _issuance_anchor(event: Mapping[str, Any]) -> date | None:
+    fields = event.get("fields") or {}
+    raw = fields.get("pricing_date") or fields.get("settlement_date")
+    return date.fromisoformat(str(raw)[:10]) if raw else None
+
+
+def _market_confirmation(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_series: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        ident = str(row.get("series_identifier") or "").upper()
+        if ident in MARKET_SERIES and row.get("value_numeric") is not None:
+            by_series[ident].append(row)
+    instruments = {}
+    for ident in MARKET_SERIES:
+        ordered = sorted(by_series.get(ident, []), key=lambda r: str(r.get("observation_time")))
+        if not ordered:
+            instruments[ident] = {"status": "Market confirmation unavailable", "latest": None}
+            continue
+        current = ordered[-1]
+        previous = ordered[-2] if len(ordered) > 1 else None
+        prior = None if previous is None else float(previous["value_numeric"])
+        change = (None if prior in (None, 0) else
+                  (float(current["value_numeric"]) / prior - 1) * 100)
+        instruments[ident] = {
+            "status": "AVAILABLE" if change is not None else "INSUFFICIENT OBSERVATIONS",
+            "latest": current["value_numeric"],
+            "unit": current.get("unit"),
+            "source_observation_date": str(current.get("observation_time"))[:10],
+            "prior_observation_date": str(previous.get("observation_time"))[:10] if previous else None,
+            "return_window_days": ((date.fromisoformat(str(current.get("observation_time"))[:10]) -
+                                    date.fromisoformat(str(previous.get("observation_time"))[:10])).days
+                                   if previous else None),
+            "event_date": str(current.get("observation_time"))[:10],
+            "lag_days": 0,
+            "temporal_relationship": "SAME_DAY",
+            "return_percent": change,
+            "source_identifier": current.get("source_identifier"),
+            "source_url": current.get("source_url"),
+            "retrieval_time": current.get("retrieval_time"),
+            "evidence_type": EvidenceType.CALCULATION.value,
+        }
+    available = any(value.get("status") == "AVAILABLE" for value in instruments.values())
+    return {
+        "status": "AVAILABLE" if available else "Market confirmation unavailable",
+        "classification": "OBSERVATION — cross-market co-movement" if available else None,
+        "instruments": instruments,
+        "causality_established": False,
     }
 
 
@@ -304,6 +592,7 @@ def _auction_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         provenance[auction_id] = {
             "source_identifier": row.get("source_identifier"), "source_url": row.get("source_url"),
             "observation_id": row.get("observation_id"), "raw_record_id": row.get("raw_record_id"),
+            "source_record_id": auction_id,
             "retrieval_time": row.get("retrieval_time"), "publication_time": row.get("publication_time"),
         }
     result = []
