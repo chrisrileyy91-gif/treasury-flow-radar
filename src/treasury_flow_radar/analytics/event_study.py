@@ -8,6 +8,7 @@ from typing import Any
 from treasury_flow_radar.analytics.descriptive import EvidenceType, Observation
 
 MARKET_SERIES = ("ZT", "ZF", "ZN", "TN", "UB", "ZB", "HYG", "IWM", "DXY")
+YIELD_SERIES = ("DGS2", "DGS5", "DGS7", "DGS10", "DGS30")
 
 
 def event_study(event_date: date | str, rows: Iterable[Mapping[str, Any] | Observation]) -> dict[str, Any]:
@@ -21,9 +22,11 @@ def event_study(event_date: date | str, rows: Iterable[Mapping[str, Any] | Obser
     source_rows = [dict(row) if isinstance(row, Mapping) else _observation_mapping(row)
                    for row in rows]
     observations = [Observation.from_mapping(row) for row in source_rows]
+    # Offsets count DGS10 sessions that carry a value; no-value dates (e.g. bond-market
+    # closures) are not sessions and are never counted as T offsets.
     yield_dates = sorted({
         _day(item.observation_time) for item in observations
-        if item.series_id.upper() == "DGS10"
+        if item.series_id.upper() == "DGS10" and item.value is not None
     })
     prior = [day for day in yield_dates if day < event_day]
     following = [day for day in yield_dates if day > event_day]
@@ -49,7 +52,7 @@ def event_study(event_date: date | str, rows: Iterable[Mapping[str, Any] | Obser
             day = date_by_offset.get(offset)
             by_series = per_day.get(day, {}) if day else {}
             values = {name: _latest_numeric(by_series.get(name, []))
-                      for name in ("DGS2", "DGS10", *MARKET_SERIES)}
+                      for name in (*YIELD_SERIES, *MARKET_SERIES)}
             d2, d10 = values["DGS2"], values["DGS10"]
             window.append({
                 "offset": offset,
@@ -57,8 +60,7 @@ def event_study(event_date: date | str, rows: Iterable[Mapping[str, Any] | Obser
                 "source_observation_date": day.isoformat() if day else None,
                 "temporal_lag_days": (event_day - day).days if day else None,
                 "temporal_relationship": _relation(day, event_day) if day else None,
-                "dgs2_percent": d2,
-                "dgs10_percent": d10,
+                **{f"{name.lower()}_percent": values[name] for name in YIELD_SERIES},
                 "spread_percentage_points": None if d2 is None or d10 is None else d10 - d2,
                 "spread_bps": None if d2 is None or d10 is None else (d10 - d2) * 100,
                 "market": {
@@ -69,8 +71,8 @@ def event_study(event_date: date | str, rows: Iterable[Mapping[str, Any] | Obser
             })
         baseline = next((r for r in window if r["offset"] == -1), None)
         for row in window:
-            for name, value_key in (("dgs2_change_bps", "dgs2_percent"),
-                                    ("dgs10_change_bps", "dgs10_percent"),
+            for name, value_key in (*((f"{s.lower()}_change_bps", f"{s.lower()}_percent")
+                                      for s in YIELD_SERIES),
                                     ("spread_change_bps", "spread_percentage_points")):
                 before = None if baseline is None else baseline[value_key]
                 current = row[value_key]
@@ -80,7 +82,7 @@ def event_study(event_date: date | str, rows: Iterable[Mapping[str, Any] | Obser
     full = full_windows[5]
     by_offset = {row["offset"]: row for row in full}
     summary = {}
-    for series, value_key in (("DGS2", "dgs2_percent"), ("DGS10", "dgs10_percent"),
+    for series, value_key in (*((s, f"{s.lower()}_percent") for s in YIELD_SERIES),
                               ("10Y-2Y", "spread_percentage_points")):
         values = {offset: row[value_key] for offset, row in by_offset.items()}
         pre = _delta(values.get(-5), values.get(-1), 100)

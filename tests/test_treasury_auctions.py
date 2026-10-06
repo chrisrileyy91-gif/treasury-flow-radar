@@ -232,3 +232,30 @@ def test_bad_fields_and_http_error_fail_closed():
         cli.fetch_history()
 
 
+
+
+def test_amounts_are_whole_dollars_and_legacy_unit_label_gets_linked_revision(tmp_path):
+    page_one = fixture("treasury_fiscaldata_auctions_page_1.json")
+    page_two = fixture("treasury_fiscaldata_auctions_page_2.json")
+    db = tmp_path / "auction.sqlite3"
+    ingest_treasury_auctions(database_path=db, client=client([page_one, page_two])[0])
+    with database(db) as conn:
+        rows = get_observations(conn)
+        amounts = [r for r in rows if json.loads(r["metadata_json"])["source_field"]
+                   in {"offering_amt", "total_accepted", "comp_accepted", "noncomp_accepted"}]
+        assert amounts and {r["unit"] for r in amounts} == {"us_dollars"}
+        # Simulate a database ingested before the correction (mislabelled as thousands).
+        conn.execute("UPDATE observations SET unit='thousand_us_dollars' WHERE unit='us_dollars'")
+    later = lambda: datetime(2025, 2, 21, 17, 30, tzinfo=UTC)
+    corrected = ingest_treasury_auctions(database_path=db, client=client([page_one, page_two], clock=later)[0])
+    assert corrected["inserted"] == len(amounts)
+    with database(db) as conn:
+        rows = get_observations(conn)
+        for legacy in (r for r in rows if r["unit"] == "thousand_us_dollars"):
+            successor = next(r for r in rows if r["revision_of_id"] == legacy["id"])
+            assert successor["unit"] == "us_dollars" and successor["revision"] == legacy["revision"] + 1
+            assert successor["raw_value"] == legacy["raw_value"]
+        before = get_observations_as_of(conn, RETRIEVED + timedelta(hours=1))
+        assert {r["unit"] for r in before if r["id"] in {a["id"] for a in amounts}} == {"thousand_us_dollars"}
+    again = ingest_treasury_auctions(database_path=db, client=client([page_one, page_two], clock=later)[0])
+    assert again["inserted"] == 0

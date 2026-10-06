@@ -386,7 +386,7 @@ def ingest_treasury_auctions(
                                          "auction_date": "date auction was held",
                                          "issue_date": "issue/settlement calendar date"},
                 "publication_timestamp": "not supplied by dataset; stored as NULL",
-                "amount_unit": "source-native thousands of U.S. dollars",
+                "amount_unit": "source-native whole U.S. dollars",
                 "supported_types": sorted(SECURITY_TYPES),
                 "supported_terms": list(SECURITY_TERMS),
             },
@@ -421,20 +421,25 @@ def ingest_treasury_auctions(
                     logical_key = f"{auction.source_id}|{field}"
                     current = get_observations(conn, source_id=source_id, series_id=series_id,
                                                logical_key=logical_key)
+                    # Fiscal Data amounts are whole U.S. dollars (API dataType CURRENCY0);
+                    # e.g. a $44 billion 7-year offering is reported as 44000000000.
+                    unit = (
+                        "us_dollars" if field in AMOUNT_FIELDS
+                        else "ratio" if field == "bid_to_cover_ratio"
+                        else "percent"
+                    )
                     if current:
                         latest = max(current, key=lambda row: row["revision"])
-                        if latest["raw_value"] == raw_value and latest["value_numeric"] == number:
+                        # A corrected unit label is recorded as a new linked revision so
+                        # the earlier label remains auditable rather than overwritten.
+                        if (latest["raw_value"] == raw_value and latest["value_numeric"] == number
+                                and latest["unit"] == unit):
                             unchanged += 1
                             missing += number is None
                             continue
                         revision, predecessor = latest["revision"] + 1, latest["id"]
                     else:
                         revision, predecessor = 1, None
-                    unit = (
-                        "thousand_us_dollars" if field in AMOUNT_FIELDS
-                        else "ratio" if field == "bid_to_cover_ratio"
-                        else "percent"
-                    )
                     insert_observation(
                         conn, source_id=source_id, series_id=series_id, logical_key=logical_key,
                         revision=revision, revision_of_id=predecessor, observation_time=obs_time,

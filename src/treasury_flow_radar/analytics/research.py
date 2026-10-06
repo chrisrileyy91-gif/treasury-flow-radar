@@ -27,7 +27,11 @@ def large_yield_moves(
     series_id: str = "DGS10",
     threshold_bps: float = 5.0,
 ) -> list[dict[str, Any]]:
-    """Return adjacent observed yield changes meeting an absolute bp threshold."""
+    """Return changes between consecutive valued yield sessions meeting an absolute bp threshold.
+
+    No-value dates (e.g. bond-market closures) are skipped, so the first session after
+    a closure is compared with the last session before it; the skipped dates are listed.
+    """
     if not math.isfinite(threshold_bps) or threshold_bps < 0:
         raise ValueError("threshold_bps must be finite and nonnegative")
     rows = yield_metrics(observations, series_id)
@@ -47,6 +51,8 @@ def large_yield_moves(
             "prior_yield_percent": prior.yield_percent,
             "current_yield_percent": current.yield_percent,
             "change_bps": change,
+            "skipped_no_value_dates": [day.isoformat() for day in current.skipped_no_value_dates],
+            "calendar_days_since_prior": (current.observation_time - prior.observation_time).days,
             "direction": "UP" if change > 0 else "DOWN",
             "evidence_type": EvidenceType.OBSERVATION.value,
         })
@@ -78,7 +84,7 @@ def build_research_report(
 
     yields = {
         sid: yield_metrics(observations, sid)
-        for sid in ("DGS2", "DGS10")
+        for sid in ("DGS2", "DGS5", "DGS7", "DGS10", "DGS30")
     }
     curves = curve_metrics(observations)
     curve_by_day = {m.observation_time: m for m in curves}
@@ -606,9 +612,9 @@ def _auction_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "security_type": item.get("security_type"),
             "security_term": item.get("security_term"),
             "offering_amount": item.get("offering_amt"),
-            "offering_amount_unit": item.get("offering_amt_unit") or "thousand_us_dollars",
+            "offering_amount_unit": item.get("offering_amt_unit") or "us_dollars",
             "accepted_amount": item.get("total_accepted"),
-            "accepted_amount_unit": item.get("total_accepted_unit") or "thousand_us_dollars",
+            "accepted_amount_unit": item.get("total_accepted_unit") or "us_dollars",
             "bid_to_cover": item.get("bid_to_cover_ratio"),
             "yield_or_rate": item.get(rate_field) if rate_field else None,
             "yield_or_rate_field": rate_field,

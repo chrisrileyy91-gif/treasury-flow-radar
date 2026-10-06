@@ -19,10 +19,13 @@ from treasury_flow_radar.sources.nyfed import ingest_nyfed
 from treasury_flow_radar.sources.treasury_auctions import ingest_treasury_auctions
 
 DEFAULT_WINDOW_DAYS = 730
-SOURCE_NAMES = ("fred-dgs2", "fred-dgs10", "nyfed", "cftc", "treasury-auctions")
+FRED_SOURCES = {
+    "fred-dgs2": "DGS2", "fred-dgs5": "DGS5", "fred-dgs7": "DGS7",
+    "fred-dgs10": "DGS10", "fred-dgs30": "DGS30",
+}
+SOURCE_NAMES = (*FRED_SOURCES, "nyfed", "cftc", "treasury-auctions")
 SOURCE_LABELS = {
-    "fred-dgs2": "FRED DGS2",
-    "fred-dgs10": "FRED DGS10",
+    **{key: f"FRED {series}" for key, series in FRED_SOURCES.items()},
     "nyfed": "NY Fed Primary Dealer Treasury positioning",
     "cftc": "CFTC Treasury futures positioning",
     "treasury-auctions": "U.S. Treasury auctions",
@@ -152,14 +155,13 @@ def run_ingestion(
         raise ValueError(f"unknown source selection(s): {', '.join(unknown)}")
 
     adapters = {
-        "fred-dgs2": lambda: ingest_fred(
-            ["DGS2"], database_path=database_path,
-            observation_start=start, observation_end=end,
-        ),
-        "fred-dgs10": lambda: ingest_fred(
-            ["DGS10"], database_path=database_path,
-            observation_start=start, observation_end=end,
-        ),
+        **{
+            key: (lambda series=series: ingest_fred(
+                [series], database_path=database_path,
+                observation_start=start, observation_end=end,
+            ))
+            for key, series in FRED_SOURCES.items()
+        },
         "nyfed": lambda: ingest_nyfed(
             database_path=database_path, observation_start=start, observation_end=end,
         ),
@@ -181,10 +183,10 @@ def run_ingestion(
             ))
             continue
         source_identifier = {
-            "fred-dgs2": "FRED", "fred-dgs10": "FRED", "nyfed": "NYFED",
+            **dict.fromkeys(FRED_SOURCES, "FRED"), "nyfed": "NYFED",
             "cftc": "CFTC", "treasury-auctions": "U.S. Treasury Fiscal Data",
         }[key]
-        series_identifier = {"fred-dgs2": "DGS2", "fred-dgs10": "DGS10"}.get(key)
+        series_identifier = FRED_SOURCES.get(key)
         old_observations = old_raw = 0
         try:
             old_observations, old_raw = _counts(database_path, source_identifier, series_identifier)

@@ -256,3 +256,17 @@ def test_database_failures_are_not_silently_swallowed(tmp_path):
         ingest_fred(["DGS10"], database_path=db_path, client=client)
 
 
+
+
+def test_five_curve_points_ingest_as_separate_series(tmp_path):
+    series = ("DGS2", "DGS5", "DGS7", "DGS10", "DGS30")
+    payloads = {sid: response(sid, [{"date": "2026-10-05", "value": "4.5"}]) for sid in series}
+    db_path = tmp_path / "fred.sqlite3"
+    ingest_fred(list(series), database_path=db_path, client=fixed_client(payloads))
+    with database(db_path) as conn:
+        names = {row["identifier"]: row["name"] for row in conn.execute(
+            "SELECT identifier, name FROM series")}
+    assert set(names) == set(series)
+    assert names["DGS30"] == "30-Year Treasury Constant Maturity Rate"
+    with pytest.raises(ValueError, match="unsupported ingestion series"):
+        ingest_fred(["DGS3MO"], database_path=db_path, client=fixed_client(payloads))

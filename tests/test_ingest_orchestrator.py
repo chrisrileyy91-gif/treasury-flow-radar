@@ -141,3 +141,10 @@ def test_runner_rejects_invalid_dates_and_duplicate_sources(tmp_path):
     else:
         raise AssertionError("duplicate source selection was accepted")
 
+
+
+def test_orchestrator_offers_each_fred_curve_point_as_its_own_source():
+    from treasury_flow_radar.ingest import FRED_SOURCES, SOURCE_NAMES
+    assert FRED_SOURCES == {"fred-dgs2": "DGS2", "fred-dgs5": "DGS5", "fred-dgs7": "DGS7",
+                            "fred-dgs10": "DGS10", "fred-dgs30": "DGS30"}
+    assert set(FRED_SOURCES) <= set(SOURCE_NAMES)

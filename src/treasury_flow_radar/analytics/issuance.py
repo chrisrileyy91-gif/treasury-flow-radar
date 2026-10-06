@@ -125,12 +125,16 @@ def _finite(value: Any) -> float | None:
 
 def _yield_series(benchmark: Any, rows: list[Observation | Mapping[str, Any]]) -> list[Observation | Mapping[str, Any]]:
     name = str(benchmark or "").casefold().replace(" ", "")
-    target = "DGS2" if name in {"2y", "2-year", "2year", "dgs2"} else (
-        "DGS10" if name in {"10y", "10-year", "10year", "dgs10"} else None
-    )
+    # Map a stated Treasury benchmark to the matching FRED constant-maturity series.
+    # An unrecognized benchmark yields no series rather than a guessed substitute.
+    target = next((f"DGS{years}" for years in (2, 5, 7, 10, 30)
+                   if name in {f"{years}y", f"{years}-year", f"{years}year", f"dgs{years}"}), None)
     observations = [item if isinstance(item, Observation) else Observation.from_mapping(item)
                     for item in rows]
-    selected = [item for item in observations if target is not None and item.series_id.upper() == target]
+    # Milestones align to valued yield sessions only; a no-value date (e.g. a market
+    # closure) is never selected as the "prior" or "following" yield.
+    selected = [item for item in observations
+                if target is not None and item.series_id.upper() == target and item.value is not None]
     return selected
 
 

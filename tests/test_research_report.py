@@ -55,10 +55,18 @@ def test_large_move_detector_threshold_direction_and_missing_values():
     rows = [_obs("DGS10", "2025-01-02", 4.0), _obs("DGS10", "2025-01-03", 4.05),
             _obs("DGS10", "2025-01-06", None), _obs("DGS10", "2025-01-07", 4.10)]
     events = large_yield_moves(rows)
-    assert len(events) == 1
+    assert len(events) == 2
     assert events[0]["direction"] == "UP"
     assert events[0]["change_bps"] == pytest.approx(5)
+    assert events[0]["skipped_no_value_dates"] == []
     assert events[0]["evidence_type"] == EvidenceType.OBSERVATION
+    # The session after a no-value date is compared with the last valued session.
+    after_gap = events[1]
+    assert after_gap["event_date"] == "2025-01-07"
+    assert after_gap["prior_observation_date"] == "2025-01-03"
+    assert after_gap["change_bps"] == pytest.approx(5)
+    assert after_gap["skipped_no_value_dates"] == ["2025-01-06"]
+    assert after_gap["calendar_days_since_prior"] == 4
     with pytest.raises(ValueError, match="finite and nonnegative"):
         large_yield_moves(rows, threshold_bps=float("nan"))
 
@@ -103,7 +111,7 @@ def _context_rows():
                          ("bid_to_cover_ratio", 2.5), ("high_yield", 4.3)]:
         rows.append(_row("U.S. Treasury Fiscal Data", "treasury_auction_note_10_year",
                          "2025-01-02", value, unit=("ratio" if field == "bid_to_cover_ratio"
-                         else "percent" if field == "high_yield" else "thousand_us_dollars"),
+                         else "percent" if field == "high_yield" else "us_dollars"),
                          logical=f"auction|{field}", metadata={**auction_base, "source_field": field}))
     return rows
 
@@ -131,7 +139,7 @@ def test_event_context_respects_weekly_dates_cftc_lag_and_auction_window():
     assert auction["accepted_amount"] == 41000
     assert auction["bid_to_cover"] == 2.5
     assert auction["yield_or_rate"] == 4.3
-    assert auction["offering_amount_unit"] == "thousand_us_dollars"
+    assert auction["offering_amount_unit"] == "us_dollars"
     assert auction["yield_or_rate_field"] == "high_yield"
     assert event["event"]["evidence_type"] == EvidenceType.OBSERVATION
     assert report["method"]["weekly_series"].startswith("aligned to latest")
@@ -176,3 +184,16 @@ def test_json_encoding_accepts_report_values_and_evidence_labels():
     assert '"FACT"' in encoded
     assert '"OBSERVATION"' in encoded
 
+
+
+def test_event_study_offsets_skip_no_value_dates():
+    from treasury_flow_radar.analytics.event_study import event_study
+    days = ["2025-06-30", "2025-07-01", "2025-07-02", "2025-07-03", "2025-07-04",
+            "2025-07-07", "2025-07-08"]
+    rows = [_obs("DGS10", d, None if d == "2025-07-04" else 4.0 + i / 100)
+            for i, d in enumerate(days)]
+    window = {r["offset"]: r for r in event_study("2025-07-07", rows)["windows"]["T-5_T+5"]}
+    assert window[-1]["source_observation_date"] == "2025-07-03"
+    assert window[-4]["source_observation_date"] == "2025-06-30"
+    assert window[1]["source_observation_date"] == "2025-07-08"
+    assert window[0]["dgs10_change_bps"] == pytest.approx(2)

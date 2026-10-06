@@ -36,7 +36,20 @@ SUPPORTED_SERIES = {
         "name": "2-Year Treasury Constant Maturity Rate",
         "description": "Market yield on U.S. Treasury securities at 2-year constant maturity.",
     },
+    "DGS5": {
+        "name": "5-Year Treasury Constant Maturity Rate",
+        "description": "Market yield on U.S. Treasury securities at 5-year constant maturity.",
+    },
+    "DGS7": {
+        "name": "7-Year Treasury Constant Maturity Rate",
+        "description": "Market yield on U.S. Treasury securities at 7-year constant maturity.",
+    },
+    "DGS30": {
+        "name": "30-Year Treasury Constant Maturity Rate",
+        "description": "Market yield on U.S. Treasury securities at 30-year constant maturity.",
+    },
 }
+SUPPORTED_LIST = ", ".join(SUPPORTED_SERIES)
 SOURCE_IDENTIFIER = "FRED"
 SOURCE_NAME = "Federal Reserve Bank of St. Louis FRED"
 SOURCE_URL = "https://fred.stlouisfed.org/"
@@ -275,7 +288,7 @@ def _series_definition(series_id: str) -> Mapping[str, str]:
         return SUPPORTED_SERIES[series_id]
     except KeyError as exc:
         raise ValueError(
-            f"unsupported ingestion series {series_id!r}; choose DGS10 and/or DGS2"
+            f"unsupported ingestion series {series_id!r}; choose from {SUPPORTED_LIST}"
         ) from exc
 
 
@@ -289,7 +302,7 @@ def ingest_fred(
 ) -> list[IngestionResult]:
     """Fetch requested FRED series, then atomically persist payloads and observations."""
     if not series_ids:
-        raise ValueError("request at least one series: DGS10 and/or DGS2")
+        raise ValueError(f"request at least one series from {SUPPORTED_LIST}")
     if len(set(series_ids)) != len(series_ids):
         raise ValueError("series identifiers must not be repeated")
     for series_id in series_ids:
@@ -422,14 +435,14 @@ def ingest_fred(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Ingest FRED Treasury constant maturity yields (DGS10 and DGS2)."
+        description="Ingest FRED Treasury constant maturity yields (DGS2, DGS5, DGS7, DGS10, DGS30)."
     )
     parser.add_argument(
         "series",
         nargs="*",
         choices=sorted(SUPPORTED_SERIES),
         default=None,
-        help="series to ingest; defaults to both DGS10 and DGS2",
+        help="series to ingest; defaults to all supported series",
     )
     parser.add_argument(
         "--database",
@@ -437,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
         help="SQLite database path (default: TREASURY_FLOW_RADAR_DB or project data path)",
     )
     args = parser.parse_args(argv)
-    selected = args.series or ["DGS10", "DGS2"]
+    selected = args.series or list(SUPPORTED_SERIES)
     try:
         results = ingest_fred(selected, database_path=args.database)
     except FredError as exc:

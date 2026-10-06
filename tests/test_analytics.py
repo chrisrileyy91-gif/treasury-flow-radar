@@ -81,17 +81,24 @@ def test_yield_rolling_mean_and_volatility_are_defined():
     assert result.rolling_volatility_5_bps == pytest.approx(1.41421356237)
 
 
-def test_missing_yield_values_break_changes_and_rolling_windows():
+def test_no_value_yield_dates_are_skipped_as_non_sessions_not_filled():
     days = weekdays(date(2025, 1, 6), 7)
     rows = [
         obs("DGS2", day, None if i == 3 else 4 + i / 100, unit="Percent")
         for i, day in enumerate(days)
     ]
     result = yield_metrics(rows, "DGS2")
-    assert result[3].yield_percent is None
-    assert result[3].daily_change_bps is None
-    assert result[4].daily_change_bps is None
-    assert result[6].rolling_mean_5_percent is None
+    # The no-value date is not emitted and nothing is interpolated for it.
+    assert [r.observation_time for r in result] == [d for i, d in enumerate(days) if i != 3]
+    assert all(r.yield_percent is not None for r in result)
+    # The next session is measured against the last valued session (4.02 -> 4.04).
+    after = result[3]
+    assert after.observation_time == days[4]
+    assert after.daily_change_bps == pytest.approx(2)
+    assert after.skipped_no_value_dates == (days[3],)
+    assert result[2].skipped_no_value_dates == ()
+    # Five-session windows count valued sessions only.
+    assert result[5].rolling_mean_5_percent == pytest.approx((4.01 + 4.02 + 4.04 + 4.05 + 4.06) / 5)
 
 
 def test_yield_revisions_use_latest_version_and_deterministic_sort():

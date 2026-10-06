@@ -227,3 +227,21 @@ def test_live_and_static_modes_describe_themselves_accurately():
     assert "Live view of the local database" in live and "Static snapshot" not in live
     assert "self-contained snapshot" not in live
     assert "Static snapshot" in static and "self-contained snapshot" in static
+
+
+def test_event_study_and_issuance_cover_5y_7y_30y_curve_points():
+    days = ["2025-10-01", "2025-10-02", "2025-10-03", "2025-10-06"]
+    rows = [row(s, d, base + i / 100) for i, d in enumerate(days)
+            for s, base in (("DGS10", 4.0), ("DGS5", 3.8), ("DGS7", 3.9), ("DGS30", 4.6))]
+    study = event_study("2025-10-03", rows)
+    t0 = next(r for r in study["windows"]["T-5_T+5"] if r["offset"] == 0)
+    assert t0["dgs30_percent"] == pytest.approx(4.62)
+    assert t0["dgs30_change_bps"] == pytest.approx(1)
+    assert study["summary"]["DGS5"]["event_day_move_bps"] == pytest.approx(1)
+    result = analyze_issuance_event(
+        {"fields": {"pricing_date": "2025-10-02", "settlement_date": "2025-10-03",
+                    "benchmark_maturity": "30Y"}}, rows)
+    assert result["treasury_yield_series"] == "DGS30"
+    unknown = analyze_issuance_event(
+        {"fields": {"pricing_date": "2025-10-02", "benchmark_maturity": "3Y"}}, rows)
+    assert unknown["treasury_yield_series"] is None

@@ -97,6 +97,9 @@ class YieldMetrics:
     rolling_volatility_5_bps: float | None
     rolling_volatility_20_bps: float | None
     evidence_type: EvidenceType = EvidenceType.CALCULATION
+    # Dates between the prior session and this one whose source row carried no value
+    # (FRED's "." marker, e.g. bond-market closures). They are skipped, never filled.
+    skipped_no_value_dates: tuple[date, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -223,6 +226,27 @@ def _series_values(
     return [(d, by_day[d].value, by_day[d]) for d in sorted(by_day)]
 
 
+def _yield_sessions(
+    items: Iterable[Observation | Mapping[str, Any]], series_id: str
+) -> list[tuple[date, float, Observation, tuple[date, ...]]]:
+    """Yield rows that carry a value, each with the no-value dates skipped before it.
+
+    A daily constant-maturity yield row with no value (FRED's "." marker) means no
+    value was published for that date, typically a bond-market closure. It is treated
+    as a non-session: it is excluded from the observation sequence rather than breaking
+    adjacent changes. Nothing is interpolated; the skipped dates are reported.
+    """
+    sessions = []
+    skipped: list[date] = []
+    for day, value, item in _series_values(items, series_id):
+        if value is None:
+            skipped.append(day)
+            continue
+        sessions.append((day, value, item, tuple(skipped)))
+        skipped = []
+    return sessions
+
+
 def _window_mean(values: list[float | None], end: int, size: int) -> float | None:
     window = values[max(0, end - size + 1) : end + 1]
     return fmean(window) if len(window) == size and all(v is not None for v in window) else None  # type: ignore[arg-type]
@@ -248,9 +272,14 @@ def yield_metrics(
     *,
     expected_unit: str = "Percent",
 ) -> list[YieldMetrics]:
-    """Calculate yield deltas; changes use prior available observations, never filled dates."""
-    rows = _series_values(observations, series_id)
-    for _, _, item in rows:
+    """Calculate yield deltas between consecutive valued sessions; dates are never filled.
+
+    Rows without a value are skipped as non-sessions (see ``_yield_sessions``), so a
+    move on the first session after a market closure is measured against the last
+    session before it. Each result lists the no-value dates it skipped.
+    """
+    rows = _yield_sessions(observations, series_id)
+    for _, _, item, _ in rows:
         if item.unit is not None and item.unit.casefold() not in {
             expected_unit.casefold(),
             "percent",
@@ -258,7 +287,7 @@ def yield_metrics(
             raise ValueError(
                 f"yield {series_id!r} requires percentage-point values, got unit {item.unit!r}"
             )
-    vals = [value for _, value, _ in rows]
+    vals: list[float | None] = [value for _, value, _, _ in rows]
     daily_pp = [_lag_change(vals, i, 1) for i in range(len(vals))]
     daily_bps = [None if value is None else value * 100 for value in daily_pp]
     return [
@@ -275,8 +304,9 @@ def yield_metrics(
             _window_mean(vals, i, 20),
             _window_vol(daily_bps, i, 5),
             _window_vol(daily_bps, i, 20),
+            skipped_no_value_dates=skipped,
         )
-        for i, (day, value, _) in enumerate(rows)
+        for i, (day, value, _, skipped) in enumerate(rows)
     ]
 
 
@@ -288,8 +318,8 @@ def curve_metrics(
 ) -> list[CurveMetrics]:
     """Calculate exact-date 10Y minus 2Y spreads in basis points on shared dates only."""
     obs = _latest_per_date(observations)
-    two = {day: val for day, val, _ in _series_values(obs, two_year_series)}
-    ten = {day: val for day, val, _ in _series_values(obs, ten_year_series)}
+    two = {day: val for day, val, _, _ in _yield_sessions(obs, two_year_series)}
+    ten = {day: val for day, val, _, _ in _yield_sessions(obs, ten_year_series)}
     dates = sorted(set(two) & set(ten))
     spreads = [None if two[d] is None or ten[d] is None else (ten[d] - two[d]) * 100 for d in dates]
     spreads_pp = [None if two[d] is None or ten[d] is None else ten[d] - two[d] for d in dates]
