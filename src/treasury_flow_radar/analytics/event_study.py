@@ -7,7 +7,7 @@ from typing import Any
 
 from treasury_flow_radar.analytics.descriptive import EvidenceType, Observation
 
-MARKET_SERIES = ("ZT", "ZN", "UB", "ZB", "HYG", "IWM", "DXY")
+MARKET_SERIES = ("ZT", "ZF", "ZN", "TN", "UB", "ZB", "HYG", "IWM", "DXY")
 
 
 def event_study(event_date: date | str, rows: Iterable[Mapping[str, Any] | Observation]) -> dict[str, Any]:

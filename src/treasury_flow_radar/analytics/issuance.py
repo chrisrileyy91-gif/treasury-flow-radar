@@ -51,6 +51,14 @@ def analyze_issuance_event(
     settlement_match = next(x["match"] for x in timeline if x["milestone"] == "settlement")
     post = {}
     if settlement is not None:
+        next_match = align_observation(series, settlement + timedelta(days=1), direction="following")
+        post["immediately_after_settlement"] = {
+            "target_date": (settlement + timedelta(days=1)).isoformat(),
+            "match": None if next_match is None else next_match.to_dict(),
+            "change_from_settlement_bps": _match_delta(
+                settlement_match, None if next_match is None else next_match.to_dict()
+            ),
+        }
         for horizon in (1, 2, 3, 5):
             target = settlement + timedelta(days=horizon)
             match = align_observation(series, target, direction="following")

@@ -68,6 +68,7 @@ def test_issuance_duration_and_post_settlement_alignment_are_labeled():
     assert result["duration_estimate_kind"] == "estimate"
     assert result["duration_pressure_unit"] == "USD-years"
     assert result["yield_changes"]["announcement_to_pricing"]["change_bps"] == pytest.approx(10)
+    assert result["post_settlement_changes"]["immediately_after_settlement"]["match"]["source_observation_date"] == "2025-06-20"
     assert result["post_settlement_changes"]["1_calendar_days"]["match"]["source_observation_date"] == "2025-06-20"
     assert "do not establish" in result["interpretation"]
 
