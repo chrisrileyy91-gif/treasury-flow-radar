@@ -154,7 +154,7 @@ def test_compact_dashboard_overview_and_audit_details_are_rendered():
     html = render_report(report)
     assert "SYSTEM READ" in html
     assert "WHAT IS HAPPENING?" in html
-    assert "EVIDENCE FOR / EVIDENCE AGAINST / UNKNOWN" in html
+    assert "EVIDENCE AVAILABLE / NOT AVAILABLE" in html
     assert "CORPORATE ISSUANCE / RATE-LOCK HYPOTHESIS" in html
     assert "UNAVAILABLE — NO PRODUCTION FEED CONFIGURED" in html
     assert "Raw structured evidence" in html
@@ -175,3 +175,55 @@ def test_compact_cftc_contract_summary_keeps_participant_details_collapsed():
     assert "Spreading" in html
 
 
+
+
+def _section(html: str, heading: str) -> str:
+    """Return the HTML of one <section>, located by its <h2> heading."""
+    start = html.index(f"<h2>{heading}</h2>")
+    return html[start:html.index("</section>", start)]
+
+
+def _list_after(html: str, h3: str) -> list[str]:
+    start = html.index(f"<h3>{h3}</h3>")
+    block = html[start:html.index("</ul>", start)]
+    return re.findall(r"<li>(.*?)</li>", block)
+
+
+def test_empty_report_lists_no_treasury_evidence_as_available():
+    html = render_report(build_research_report([], start_date=date(2026, 10, 1), end_date=date(2026, 10, 1)))
+    evidence = _section(html, "EVIDENCE AVAILABLE / NOT AVAILABLE")
+    assert _list_after(evidence, "Evidence available") == ["None — no Treasury-market observations stored"]
+    missing = " ".join(_list_after(evidence, "Evidence not available"))
+    for label in ("10Y yield movement", "10Y–2Y curve movement", "Primary dealer positioning",
+                  "CFTC positioning", "Treasury auction data"):
+        assert f"{label} — <strong>UNAVAILABLE — NO OBSERVATIONS IN DATABASE</strong>" in missing
+    rate_lock = _section(html, "CORPORATE ISSUANCE / RATE-LOCK HYPOTHESIS")
+    assert "currently holds the Treasury-market side" not in rate_lock
+    assert "even the Treasury side of the hypothesis is incomplete" in rate_lock
+
+
+def test_partial_report_lists_only_the_evidence_that_exists():
+    rows = [row("DGS10", "2025-10-01", 4.0), row("DGS2", "2025-10-01", 3.5),
+            row("DGS10", "2025-10-02", 4.1), row("DGS2", "2025-10-02", 3.6)]
+    html = render_report(build_research_report(rows, start_date=date(2025, 10, 1), end_date=date(2025, 10, 2)))
+    evidence = _section(html, "EVIDENCE AVAILABLE / NOT AVAILABLE")
+    assert _list_after(evidence, "Evidence available") == ["10Y yield movement", "10Y–2Y curve movement"]
+    missing = " ".join(_list_after(evidence, "Evidence not available"))
+    assert "Primary dealer positioning — <strong>UNAVAILABLE — NO OBSERVATIONS IN DATABASE" in missing
+    assert "HYG — <strong>UNAVAILABLE — NO PRODUCTION FEED CONFIGURED" in missing
+
+
+def test_status_badges_are_rendered_as_markup_not_escaped_text():
+    html = render_report(build_research_report([], start_date=date(2026, 10, 1), end_date=date(2026, 10, 1)))
+    rate_lock = _section(html, "CORPORATE ISSUANCE / RATE-LOCK HYPOTHESIS")
+    assert "&lt;span" not in html
+    assert '<td><span class="status unavailable">UNAVAILABLE</span></td>' in rate_lock
+
+
+def test_live_and_static_modes_describe_themselves_accurately():
+    report = build_research_report([], start_date=date(2026, 10, 1), end_date=date(2026, 10, 1))
+    live = render_report(report, allow_event_input=True)
+    static = render_report(report)
+    assert "Live view of the local database" in live and "Static snapshot" not in live
+    assert "self-contained snapshot" not in live
+    assert "Static snapshot" in static and "self-contained snapshot" in static

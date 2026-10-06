@@ -38,7 +38,7 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
             "cftc": cftc,
             "auction": _auction_fact(latest_auction),
         },
-        "evidence": _evidence_status(availability, corporate, market),
+        "evidence": _evidence_status(dgs10, spread, dealer, cftc, latest_auction, corporate, market),
         "rate_lock_status": _rate_lock_status(availability, corporate, market),
         "events": [_event_view(item) for item in events],
         "provenance": _provenance(report.get("source_provenance", []), report.get("data_freshness", {})),
@@ -159,14 +159,38 @@ def _availability(available: bool) -> str:
     return "AVAILABLE" if available else "UNAVAILABLE — NO OBSERVATIONS"
 
 
-def _evidence_status(availability: Mapping[str, Any], corporate: Mapping[str, Any], market: Mapping[str, Any]) -> dict[str, list[str]]:
-    available = ["10Y yield movement", "10Y–2Y curve movement", "dealer positioning", "CFTC positioning", "Treasury auction data"]
-    missing = []
+NO_OBSERVATIONS = "UNAVAILABLE — NO OBSERVATIONS IN DATABASE"
+NO_FEED = "UNAVAILABLE — NO PRODUCTION FEED CONFIGURED"
+
+
+def _evidence_status(dgs10: Mapping[str, Any] | None, spread: Mapping[str, Any] | None,
+                     dealer: Mapping[str, Any] | None, cftc: list[dict[str, Any]],
+                     auction: Mapping[str, Any] | None, corporate: Mapping[str, Any],
+                     market: Mapping[str, Any]) -> dict[str, Any]:
+    """List evidence as available only when the stored report actually contains it.
+
+    Treasury-side items are missing because no observations were stored; corporate and
+    market-confirmation items are missing because no production feed exists. The two
+    reasons are kept separate so the page never implies more than the database holds.
+    """
+    treasury_side = [
+        ("10Y yield movement", dgs10 is not None and dgs10.get("yield_percent") is not None),
+        ("10Y–2Y curve movement", spread is not None and spread.get("spread_bps") is not None),
+        ("Primary dealer positioning", dealer is not None),
+        ("CFTC positioning", bool(cftc)),
+        ("Treasury auction data", auction is not None),
+    ]
+    available = [label for label, present in treasury_side if present]
+    missing = [{"item": label, "reason": NO_OBSERVATIONS} for label, present in treasury_side if not present]
     if corporate.get("status") != "AVAILABLE":
-        missing.extend(["Corporate issuance event feed", "Corporate deal size, maturity/duration, pricing date, and settlement date"])
+        missing.extend({"item": label, "reason": NO_FEED} for label in (
+            "Corporate issuance event feed",
+            "Corporate deal size, maturity/duration, pricing date, and settlement date"))
     if market.get("status") != "AVAILABLE":
-        missing.extend(["Treasury futures price confirmation", "HYG", "IWM", "DXY"])
+        missing.extend({"item": label, "reason": NO_FEED} for label in (
+            "Treasury futures price confirmation", "HYG", "IWM", "DXY"))
     return {"available": available, "not_available": missing,
+            "treasury_side_complete": all(present for _, present in treasury_side),
             "causality_limitation": ["Co-movement, positioning, and timing do not establish causality.",
                                       "Observation-date alignment does not establish publication-time availability or causality."]}
 

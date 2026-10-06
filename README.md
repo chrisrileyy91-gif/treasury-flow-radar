@@ -304,7 +304,7 @@ The dashboard begins with **SYSTEM READ**, a concise statement of current measur
 
 **WHAT IS HAPPENING?** keeps the first view to the latest 10Y/2Y levels and five/ten-observation changes, 10Y–2Y spread, current dealer position, a compact five-contract CFTC summary, and the latest auction. Expandable participant and event sections retain detailed observations for auditability.
 
-The evidence panel separates available evidence from unavailable feeds. In particular, corporate event-level issuance data, Treasury-futures prices, HYG, IWM, and DXY remain **UNAVAILABLE — NO PRODUCTION FEED CONFIGURED** until a legitimate provider is configured. Missing data are not negative evidence.
+The evidence panel separates available evidence from unavailable evidence, and lists an item as available only when the stored report actually contains it. Treasury-side items (yields, curve, dealer and CFTC positioning, auctions) with no stored observations are shown as **UNAVAILABLE — NO OBSERVATIONS IN DATABASE**. In particular, corporate event-level issuance data, Treasury-futures prices, HYG, IWM, and DXY remain **UNAVAILABLE — NO PRODUCTION FEED CONFIGURED** until a legitimate provider is configured. Missing data are not negative evidence.
 
 Static HTML uses the same read-only report calculations as the live dashboard. It is a self-contained snapshot with a generation time; it embeds only a bounded, recent event-detail set and compact provenance rather than the whole research report or database. Individual details include readable market, dealer, CFTC, auction, corporate, confirmation, study, provenance, and limitations sections. Raw structured evidence is available only inside collapsed details panels.
 
