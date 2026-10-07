@@ -54,6 +54,7 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
         "data_through": max((row["date"] for row in curve["rows"] if row["date"]), default=None),
         "curve": curve,
         "curve_read": _curve_read(curve["rows"]),
+        "channel": _channel(report.get("move_decomposition") or {}),
         "ten_year_history": _ten_year_history(ten, all_events),
         "spread": None if spread is None else {
             "spread_bps": spread.get("spread_bps"), "daily_change_bps": spread.get("daily_change_bps"),
@@ -145,6 +146,46 @@ def _curve_read(rows: list[dict[str, Any]]) -> str | None:
         if abs(gap) >= 0.5:
             shape = "steepened" if gap > 0 else "flattened"
             text += f" The 2-year to 30-year spread {shape} by {abs(gap):.0f} bp."
+    return text
+
+
+def _channel(decomposition: Mapping[str, Any]) -> dict[str, Any]:
+    """Latest 1- and 5-session component changes with a deterministic one-sentence read."""
+    latest = decomposition.get("latest") or {}
+    windows = latest.get("windows") or {}
+    one, five = windows.get("1"), windows.get("5")
+    basis = five or one
+    return {"date": latest.get("date"), "one": one, "five": five,
+            "term_premium": decomposition.get("term_premium"),
+            "read": _channel_read(basis, 5 if basis is five and five else 1) if basis else None}
+
+
+def _channel_read(window: Mapping[str, Any], sessions: int) -> str | None:
+    """CALCULATION wording from signs and shares only; no cause is named."""
+    nominal, real, breakeven = window.get("nominal_bps"), window.get("real_bps"), window.get("breakeven_bps")
+    if nominal is None:
+        return None
+    span = "Over the last 5 sessions" if sessions == 5 else "On the latest session"
+    verb = "rose" if nominal > 0.5 else "fell" if nominal < -0.5 else "was little changed"
+    text = f"{span} the 10-year {verb}" + ("" if verb == "was little changed" else f" {abs(round(nominal))} bp")
+    if real is None or breakeven is None:
+        text += ". Real-yield and breakeven data for those dates are not stored yet, so the split is unknown."
+    else:
+        text += f": real yield {_bp(real)}, inflation breakeven {_bp(breakeven)}."
+        if abs(nominal) > 0.5:
+            same_real, same_be = real * nominal > 0, breakeven * nominal > 0
+            if same_real and abs(real) >= abs(nominal) * 2 / 3:
+                text += " Most of the move came through the real yield."
+            elif same_be and abs(breakeven) >= abs(nominal) * 2 / 3:
+                text += " Most of the move came through inflation breakevens."
+            elif same_real and same_be:
+                text += " The move was split between the real yield and breakevens."
+            else:
+                text += " The real yield and breakevens moved in opposite directions."
+    curve = window.get("curve")
+    if curve and curve["name"] != "little changed":
+        led = "" if curve["led_by"] == "evenly" else f", led by the {curve['led_by']}"
+        text += f" The curve moved as a {curve['name']}{led} (2-year {_bp(curve['short_change_bps'])}, 30-year {_bp(curve['long_change_bps'])})."
     return text
 
 
@@ -315,6 +356,7 @@ def _event_view(item: Mapping[str, Any]) -> dict[str, Any]:
             "changes": {series: row.get(f"{series.lower()}_change_bps") for series, _, _ in MATURITIES},
         } for row in window],
         "summary_10y": (study.get("summary") or {}).get("DGS10"),
+        "channel": ((item.get("decomposition") or {}).get("windows") or {}).get("1"),
         "dealer_date": None if dealer is None else dealer.get("observation_date"),
         "cftc_date": next((c.get("positioning_date") for c in cftc if c.get("positioning_date")), None),
         "auctions": [{"date": a.get("auction_date"),

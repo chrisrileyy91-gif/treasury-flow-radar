@@ -319,6 +319,10 @@ python -c "import gzip,shutil;shutil.copyfileobj(gzip.open('data/treasury_flow_r
 
 Running ingestion locally afterwards only changes your local copy; the next scheduled run continues from the cloud copy.
 
+### Move decomposition ("Through which channel?")
+
+The FRED adapter also ingests `DFII10` (10-year real/TIPS yield), `T10YIE` (10-year breakeven inflation), and `THREEFYTP10` (the Board of Governors' daily term-premium estimate for a 10-year zero-coupon bond, published with a lag of about a week). `treasury_flow_radar.analytics.decomposition` puts each 10-year change over 1 and 5 sessions next to the real-yield and breakeven changes for the same dates, reports the gap `nominal − real − breakeven` instead of assuming it is zero, reports the latest published term premium separately (it is a model estimate, never mixed into the identity), and names the curve move from the 2-year and 30-year changes (bear/bull steepener/flattener, twist; ±0.5 bp counts as unchanged). These are CALCULATIONS: they say which channel moved, not why. Explanations shown beside them are labelled MECHANISM or HYPOTHESIS.
+
 ### Page layout
 
 The page is one self-contained HTML file (about 90 KB, no external requests) designed for a phone first. Sections answer, in order: *What is happening?* (a deterministic sentence about the last five sessions, the 2/5/7/10/30-year curve now versus 5 and 20 sessions earlier, and the 10-year over about six months), *Dealer positioning* (NY Fed aggregate, weekly), *Futures positioning* (CFTC net contracts for dealers, asset managers and leveraged funds, with every group's long/short/spreading in a collapsed table), *Treasury supply* (recent coupon auctions), *What evidence is missing?* (hatched panels for data that is not stored or has no production feed, and the rate-lock checklist), *Large 10-year moves* (each with a T−5…T+5 table across the curve), *Sources and freshness*, and *How to read this page* (the evidence taxonomy).

@@ -283,6 +283,10 @@ The one-sentence curve description is a deterministic CALCULATION from the signs
 
 `dashboard/renderer.py` produces one self-contained, phone-first HTML page. Charts are drawn client-side from a small embedded JSON block; each has a table equivalent. Missing values render as "Unknown"; missing evidence renders as hatched panels with the reason (no observations stored versus no production feed configured). The same renderer serves the live local dashboard (60 events, plus the user-supplied date form) and the static export (20 events) that the publishing workflow deploys to GitHub Pages.
 
+## Move decomposition
+
+`analytics/decomposition.py` reads valued sessions of DGS10, DFII10, T10YIE, THREEFYTP10, DGS2 and DGS30 (market-closed dates skipped through the same non-session rule as other yields). For each DGS10 session and window (1 and 5 sessions) it reports nominal, real, and breakeven changes on exactly the same two dates, their gap, the term-premium change when the model estimate exists on both dates (otherwise UNKNOWN), and a curve-shape label from `curve_shape`. The latest published term premium is reported with its own date. Report key `move_decomposition` carries the latest record; each event carries its own day's record.
+
 ## Publishing pipeline
 
 `.github/workflows/publish.yml` is dispatched at 18:00 New York time on weekdays by meridian-clock and can be run on demand; it has no `schedule:` block. The SQLite database is stored as a gzip asset on the repository's `database` release rather than in git. A run downloads it (a failed download stops the run so stored history is never replaced by an empty database), ingests, verifies it with `treasury_flow_radar.dbcheck` (integrity check and a non-decreasing observation count, since observations are immutable revisions), uploads it with a dated backup (14 kept), exports the page, and deploys it to GitHub Pages.

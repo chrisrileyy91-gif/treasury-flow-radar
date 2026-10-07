@@ -22,6 +22,7 @@ DEFAULT_WINDOW_DAYS = 730
 FRED_SOURCES = {
     "fred-dgs2": "DGS2", "fred-dgs5": "DGS5", "fred-dgs7": "DGS7",
     "fred-dgs10": "DGS10", "fred-dgs30": "DGS30",
+    "fred-dfii10": "DFII10", "fred-t10yie": "T10YIE", "fred-threefytp10": "THREEFYTP10",
 }
 SOURCE_NAMES = (*FRED_SOURCES, "nyfed", "cftc", "treasury-auctions")
 SOURCE_LABELS = {

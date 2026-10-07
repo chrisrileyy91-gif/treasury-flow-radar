@@ -154,6 +154,7 @@ def _happening(view: dict[str, Any]) -> str:
     return f'''<section id="happening" aria-labelledby="h-happening">
 <h1 id="h-happening">What is happening?</h1>
 {lead}
+{_channel(view["channel"])}
 <figure class="chart" data-chart="curve" aria-label="Treasury yield curve: latest versus 5 and 20 sessions earlier">
 <figcaption>Yield curve: latest versus 5 and 20 sessions earlier</figcaption>
 <div class="legend" data-legend="curve"></div><div class="plot"></div></figure>
@@ -165,6 +166,44 @@ def _happening(view: dict[str, Any]) -> str:
 <div class="plot"></div></figure>
 <p class="source">Source: FRED constant-maturity yields, end of day. Market-closed dates are skipped, never filled. {_tag("Fact")}</p>
 </section>'''
+
+
+def _channel(channel: dict[str, Any]) -> str:
+    one, five = channel.get("one") or {}, channel.get("five") or {}
+    def cell(window: dict[str, Any], key: str) -> Any:
+        return _bp(window.get(key), unit=False) if window else _unknown()
+    rows = [["10-year (nominal)", cell(one, "nominal_bps"), cell(five, "nominal_bps")],
+            ["Real yield (TIPS)", cell(one, "real_bps"), cell(five, "real_bps")],
+            ["Inflation breakeven", cell(one, "breakeven_bps"), cell(five, "breakeven_bps")]]
+    gaps = [w.get("gap_bps") for w in (one, five) if w and w.get("gap_bps") is not None]
+    if any(abs(g) >= 1 for g in gaps):
+        rows.append(["Gap (nominal − real − breakeven)", cell(one, "gap_bps"), cell(five, "gap_bps")])
+    def shape(window: dict[str, Any]) -> Any:
+        curve = (window or {}).get("curve")
+        return _unknown() if not curve else curve["name"]
+    curve_line = (f'<p class="note">Curve shape (2-year vs 30-year): {_text(shape(one))} over 1 day, '
+                  f'{_text(shape(five))} over 5 days.</p>')
+    read = channel.get("read")
+    lead = (f'<p class="lead-sm">{_nowrap_terms(escape(read))} {_tag("Calculation")}</p>' if read
+            else '<p class="lead-sm"><span class="unknown">Not enough data to split the move yet.</span></p>')
+    tp = channel.get("term_premium")
+    if tp:
+        change = "" if tp.get("change_bps") is None else f", {_bp(tp['change_bps'])} over its last {tp['sessions']} published sessions"
+        tp_line = (f'<p class="note">Term premium (Federal Reserve model estimate, 10-year zero-coupon): '
+                   f'<strong>{float(tp["percent"]):.2f}%</strong> on {_day(tp["date"])}{change}. '
+                   f'It is published about a week late, so it cannot yet speak to the latest sessions. {_tag("Calculation")}</p>')
+    else:
+        tp_line = '<p class="note">Term premium estimate: <span class="unknown">not stored yet</span>.</p>'
+    end = channel.get("date")
+    caption = f"Basis points, through {_day(end, year=False) if end else 'latest session'}. Real yield and breakeven are FRED market measures; any gap between them and the nominal change is shown, not assumed away."
+    return f'''<h2 class="sub-q" id="h-channel">Through which channel?</h2>
+{lead}
+{_table([("Component", "l"), ("1 day", "r"), ("5 days", "r")], rows, caption=caption)}
+{curve_line}
+{tp_line}
+<details class="more"><summary>What these components can and cannot tell you</summary>
+<p class="note">{_tag("Mechanism")} A rise in the <strong>real yield</strong> reflects higher expected real policy rates or a higher term premium. A rise in <strong>breakevens</strong> reflects more inflation compensation, which also carries an inflation-risk premium and TIPS liquidity effects. Pressure from Treasury supply or hedging flows would be expected to show up mainly in the real yield and the term premium, concentrated at the long end; a move led by the 2-year points more toward policy expectations.</p>
+<p class="note">{_tag("Hypothesis")} These are possible explanations, not findings. A split of the move says which channel moved, not why it moved.</p></details>'''
 
 
 def _dealers(view: dict[str, Any]) -> str:
@@ -305,8 +344,20 @@ def _event_detail(event: dict[str, Any]) -> str:
     return f'''<div class="event-body">
 {_table(headers, rows, caption=caption)}
 <p class="note">10-year: {_bp(summary.get("pre_event_move_bps"))} from T−5 to T−1, {_bp(summary.get("event_day_move_bps"))} on T0, {_bp(summary.get("post_event_move_bps"))} from T0 to T+5. {_tag("Calculation")}</p>
+{_event_channel(event.get("channel"))}
 <p class="note">Nearby context: {escape("; ".join(context) or "no dealer or CFTC report on or before this date")}.{(" Auctions within 3 days: " + escape(auctions) + ".") if auctions else ""} Corporate issuance and market confirmation: unavailable.</p>
 </div>'''
+
+
+def _event_channel(window: dict[str, Any] | None) -> str:
+    if not window:
+        return ""
+    curve = window.get("curve")
+    tp = window.get("term_premium_bps")
+    parts = [f"real yield {_text(_bp(window.get('real_bps')))}", f"breakeven {_text(_bp(window.get('breakeven_bps')))}",
+             "term premium " + (_text(_bp(tp)) if tp is not None else "not published for this date")]
+    shape = "" if not curve else f" Curve: {escape(curve['name'])}."
+    return f'<p class="note">On the day: {", ".join(parts)}.{shape} {_tag("Calculation")}</p>'
 
 
 def _events(view: dict[str, Any]) -> str:
@@ -454,6 +505,7 @@ h1{font-size:30px}
 h2{font-size:24px}
 h3{font-size:16px;margin:0 0 6px}
 h3.sub{margin-top:22px}
+h2.sub-q{font-size:20px;margin-top:22px}
 .lead{font-family:var(--serif);font-size:21px;line-height:1.45;margin:0 0 18px;max-width:38em}
 .lead-sm{margin:0 0 14px;max-width:40em}
 .figure{font-family:var(--serif);font-size:26px;font-weight:600}

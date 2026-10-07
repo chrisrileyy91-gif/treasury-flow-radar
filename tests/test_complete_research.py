@@ -246,3 +246,26 @@ def test_event_study_and_issuance_cover_5y_7y_30y_curve_points():
     unknown = analyze_issuance_event(
         {"fields": {"pricing_date": "2025-10-02", "benchmark_maturity": "3Y"}}, rows)
     assert unknown["treasury_yield_series"] is None
+
+
+def test_channel_block_states_split_and_curve_shape():
+    days = ["2025-09-24", "2025-09-25", "2025-09-26", "2025-09-29", "2025-09-30", "2025-10-01"]
+    rows = []
+    for i, d in enumerate(days):
+        rows += [row("DGS10", d, 4.00 + 0.014 * i), row("DFII10", d, 1.80 + 0.012 * i, unit="percent"),
+                 row("T10YIE", d, 2.20 + 0.002 * i, unit="percent"), row("DGS2", d, 3.60 + 0.002 * i),
+                 row("DGS30", d, 4.60 + 0.02 * i)]
+    html = render_report(build_research_report(rows, start_date=date(2025, 9, 1), end_date=date(2025, 10, 1)))
+    channel = html[html.index("Through which channel?"):html.index('data-chart="curve"')]
+    # 5 sessions: nominal +7, real +6, breakeven +1, 2y +1, 30y +10.
+    assert ("Over the last 5 sessions the <span class=\"nw\">10-year</span> rose 7 bp: real yield +6 bp, "
+            "inflation breakeven +1 bp. Most of the move came through the real yield.") in channel
+    assert "bear steepener, led by the long end" in channel
+    assert "Term premium estimate: <span class=\"unknown\">not stored yet</span>" in channel
+    assert "Gap (nominal" not in channel  # components add up, so no gap row
+
+
+def test_channel_block_is_unknown_without_component_series():
+    rows = [row("DGS10", "2025-10-01", 4.0), row("DGS10", "2025-10-02", 4.1)]
+    html = render_report(build_research_report(rows, start_date=date(2025, 10, 1), end_date=date(2025, 10, 2)))
+    assert "the split is unknown" in html

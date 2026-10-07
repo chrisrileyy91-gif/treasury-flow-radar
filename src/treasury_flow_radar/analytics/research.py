@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime
 from typing import Any
 
+from treasury_flow_radar.analytics.decomposition import decompose_moves
 from treasury_flow_radar.analytics.descriptive import (
     EvidenceType,
     Observation,
@@ -87,6 +88,7 @@ def build_research_report(
         for sid in ("DGS2", "DGS5", "DGS7", "DGS10", "DGS30")
     }
     curves = curve_metrics(observations)
+    decomposition = decompose_moves(observations)
     curve_by_day = {m.observation_time: m for m in curves}
     yield_by_series_day = {
         sid: {m.observation_time: m for m in metrics} for sid, metrics in yields.items()
@@ -313,6 +315,7 @@ def build_research_report(
                 },
             })
         event_summaries.append({
+            "decomposition": decomposition["by_date"].get(event["event_date"]),
             "event": {
                 **event,
                 "dgs2_change_bps": two.daily_change_bps if two else None,
@@ -463,6 +466,8 @@ def build_research_report(
             for m in curves if start_date <= m.observation_time <= end_date
         ],
         "events": event_summaries,
+        "move_decomposition": {"latest": decomposition["latest"],
+                               "term_premium": decomposition["term_premium"]},
         "dealer_positions": dealer_summaries,
         "cftc_positions": cftc_summaries,
         "treasury_auctions": auctions,

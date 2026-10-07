@@ -48,6 +48,20 @@ SUPPORTED_SERIES = {
         "name": "30-Year Treasury Constant Maturity Rate",
         "description": "Market yield on U.S. Treasury securities at 30-year constant maturity.",
     },
+    "DFII10": {
+        "name": "Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity, "
+                "Quoted on an Investment Basis, Inflation-Indexed",
+        "description": "10-year real (TIPS) yield, percent.",
+    },
+    "T10YIE": {
+        "name": "10-Year Breakeven Inflation Rate",
+        "description": "10-year nominal minus inflation-indexed constant-maturity yield, percent.",
+    },
+    "THREEFYTP10": {
+        "name": "Term Premium on a 10 Year Zero Coupon Bond",
+        "description": "Board of Governors three-factor (Kim-Wright) model estimate, percent. "
+                       "A model output, not a market quote; published with a lag of about a week.",
+    },
 }
 SUPPORTED_LIST = ", ".join(SUPPORTED_SERIES)
 SOURCE_IDENTIFIER = "FRED"
@@ -435,7 +449,7 @@ def ingest_fred(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Ingest FRED Treasury constant maturity yields (DGS2, DGS5, DGS7, DGS10, DGS30)."
+        description="Ingest FRED Treasury yields, real yield, breakeven, and term premium series."
     )
     parser.add_argument(
         "series",
