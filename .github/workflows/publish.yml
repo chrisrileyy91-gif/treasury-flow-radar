@@ -93,7 +93,10 @@ jobs:
             | while read -r old; do gh release delete-asset "$RELEASE" "$old" -y; done
 
       - name: Build the page
-        run: python -m dashboard.export --database "$DB" --output site/index.html
+        run: |
+          python -m dashboard.export --database "$DB" --output site/index.html
+          # Publish the run's per-source ingestion report (no secrets are in it) for diagnosis.
+          cp ingest-report.json site/status.json 2>/dev/null || echo '{}' > site/status.json
 
       - name: Run summary
         if: always()
