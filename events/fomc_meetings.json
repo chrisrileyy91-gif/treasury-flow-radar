@@ -1,0 +1,31 @@
+{
+  "about": "FOMC scheduled meetings from the Federal Reserve's meeting calendar. decision_date is the final day of each meeting, when the statement is released. The 2025-08-22 notation vote is not a scheduled meeting and is not listed.",
+  "source": {"url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+             "title": "Meeting calendars and information", "retrieved": "2026-10-07"},
+  "meetings": [
+    {"start": "2024-01-30", "decision_date": "2024-01-31", "sep": false},
+    {"start": "2024-03-19", "decision_date": "2024-03-20", "sep": true},
+    {"start": "2024-04-30", "decision_date": "2024-05-01", "sep": false},
+    {"start": "2024-06-11", "decision_date": "2024-06-12", "sep": true},
+    {"start": "2024-07-30", "decision_date": "2024-07-31", "sep": false},
+    {"start": "2024-09-17", "decision_date": "2024-09-18", "sep": true},
+    {"start": "2024-11-06", "decision_date": "2024-11-07", "sep": false},
+    {"start": "2024-12-17", "decision_date": "2024-12-18", "sep": true},
+    {"start": "2025-01-28", "decision_date": "2025-01-29", "sep": false},
+    {"start": "2025-03-18", "decision_date": "2025-03-19", "sep": true},
+    {"start": "2025-05-06", "decision_date": "2025-05-07", "sep": false},
+    {"start": "2025-06-17", "decision_date": "2025-06-18", "sep": true},
+    {"start": "2025-07-29", "decision_date": "2025-07-30", "sep": false},
+    {"start": "2025-09-16", "decision_date": "2025-09-17", "sep": true},
+    {"start": "2025-10-28", "decision_date": "2025-10-29", "sep": false},
+    {"start": "2025-12-09", "decision_date": "2025-12-10", "sep": true},
+    {"start": "2026-01-27", "decision_date": "2026-01-28", "sep": false},
+    {"start": "2026-03-17", "decision_date": "2026-03-18", "sep": true},
+    {"start": "2026-04-28", "decision_date": "2026-04-29", "sep": false},
+    {"start": "2026-06-16", "decision_date": "2026-06-17", "sep": true},
+    {"start": "2026-07-28", "decision_date": "2026-07-29", "sep": false},
+    {"start": "2026-09-15", "decision_date": "2026-09-16", "sep": true},
+    {"start": "2026-10-27", "decision_date": "2026-10-28", "sep": false},
+    {"start": "2026-12-08", "decision_date": "2026-12-09", "sep": true}
+  ]
+}

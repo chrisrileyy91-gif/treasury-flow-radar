@@ -11,7 +11,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-DEFAULT_LEDGER = Path(__file__).resolve().parents[2] / "events" / "corporate_deals.json"
+EVENTS_DIR = Path(__file__).resolve().parents[2] / "events"
+DEFAULT_LEDGER = EVENTS_DIR / "corporate_deals.json"
+DEFAULT_FOMC = EVENTS_DIR / "fomc_meetings.json"
 FACT_FIELDS = ("launch_date", "pricing_date", "settlement_date_expected", "transaction_close_date",
                "size_usd", "tranches", "loans", "credit_note", "market")
 DATE_FIELDS = ("launch_date", "pricing_date", "settlement_date_expected", "transaction_close_date")
@@ -48,3 +50,21 @@ def load_deals(path: str | Path = DEFAULT_LEDGER) -> list[dict[str, Any]]:
     if len(ids) != len(set(ids)):
         raise LedgerError("deal ids must be unique")
     return [validate_deal(dict(d)) for d in deals]
+
+
+def load_fomc_decisions(path: str | Path = DEFAULT_FOMC) -> list[dict[str, Any]]:
+    """FOMC decision dates from the Federal Reserve calendar file, as release-like events."""
+    path = Path(path)
+    if not path.is_file():
+        return []
+    document = json.loads(path.read_text(encoding="utf-8"))
+    source = document.get("source") or {}
+    if not str(source.get("url", "")).startswith("https://www.federalreserve.gov/"):
+        raise LedgerError("FOMC calendar must cite the Federal Reserve calendar page")
+    events = []
+    for meeting in document.get("meetings", []):
+        day = date.fromisoformat(meeting["decision_date"])
+        events.append({"date": day.isoformat(), "kind": "policy",
+                       "short": "FOMC decision" + (" (with projections)" if meeting.get("sep") else ""),
+                       "name": "FOMC statement", "source_url": source["url"]})
+    return events

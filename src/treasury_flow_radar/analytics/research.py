@@ -21,6 +21,7 @@ from treasury_flow_radar.analytics.event_study import MARKET_SERIES, YIELD_SERIE
 from treasury_flow_radar.analytics.evidence import evidence_from_rows
 from treasury_flow_radar.analytics.issuance import analyze_issuance_event
 from treasury_flow_radar.analytics.temporal import align_observation
+from treasury_flow_radar.sources.fred_releases import EXCLUDED_RELEASE_IDS
 
 
 def large_yield_moves(
@@ -69,6 +70,7 @@ def build_research_report(
     threshold_bps: float = 5.0,
     auction_window_days: int = 3,
     deals: list[dict[str, Any]] | None = None,
+    fomc_decisions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-ready report from normalized observation rows.
 
@@ -97,7 +99,9 @@ def build_research_report(
         {"date": str(r.get("observation_time"))[:10], **{k: (r.get("metadata") or {}).get(k)
          for k in ("release_id", "short_name", "kind")}, "name": r.get("value_text"),
          "short": (r.get("metadata") or {}).get("short_name")}
-        for r in source_rows if str(r.get("series_identifier") or "").startswith("FRED_RELEASE_")]
+        for r in source_rows if str(r.get("series_identifier") or "").startswith("FRED_RELEASE_")
+        and (r.get("metadata") or {}).get("release_id") not in EXCLUDED_RELEASE_IDS]
+    releases += list(fomc_decisions or [])
     curve_by_day = {m.observation_time: m for m in curves}
     yield_by_series_day = {
         sid: {m.observation_time: m for m in metrics} for sid, metrics in yields.items()

@@ -99,7 +99,11 @@ def evaluate_candidates(*, yields: Mapping[str, Mapping[date, float]],
         c["passed"] = sum(x["status"] == PASS for x in applicable)
         c["applicable"] = len(applicable)
         c["evidence_type"] = EvidenceType.INFERENCE.value
-    candidates.sort(key=lambda c: (-(c["passed"] / c["applicable"] if c["applicable"] else 0),
+    for c in candidates:
+        # Timing alone cannot rank a candidate: it needs at least one testable check besides it.
+        c["testable"] = c["applicable"] >= 2
+    candidates.sort(key=lambda c: (not c["testable"],
+                                   -(c["passed"] / c["applicable"] if c["applicable"] else 0),
                                    -c["passed"], -(c.get("size_usd") or 0)))
     return {"status": "AVAILABLE" if candidates else "NO CANDIDATES IN WINDOW",
             "window": {"start": start.isoformat(), "end": end.isoformat(), "sessions": WINDOW_SESSIONS},

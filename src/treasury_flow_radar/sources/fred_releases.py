@@ -44,8 +44,11 @@ RELEASES: dict[int, dict[str, str]] = {
     10: {"name": "Consumer Price Index", "short": "CPI", "kind": "inflation"},
     50: {"name": "Employment Situation", "short": "Jobs report", "kind": "labor"},
     54: {"name": "Personal Income and Outlays", "short": "PCE / personal income", "kind": "inflation"},
-    101: {"name": "FOMC Press Release", "short": "FOMC decision", "kind": "policy"},
 }
+# Not used: FRED release 101 ("FOMC Press Release") records a release date on every day
+# because its series update daily, so it is not a meeting calendar. FOMC decision dates
+# come from events/fomc_meetings.json (Federal Reserve meeting calendar) instead.
+EXCLUDED_RELEASE_IDS = frozenset({101})
 EVENT_UNIT = "release_event"
 
 

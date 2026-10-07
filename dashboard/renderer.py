@@ -208,6 +208,11 @@ def _candidate_block(view: dict[str, Any]) -> str:
     else:
         verdict = ('<p class="verdict">No candidate in the calendar for this window. '
                    '<span class="unknown">Unknown</span>: other news and deals not in the ledger are not covered.</p>')
+    gap = cand.get("unexplained_biggest_day")
+    if gap:
+        verdict += (f'<p class="note">The window\'s largest 10-year session, {_day(gap["date"], year=False)} '
+                    f'({_bp(gap["change_bps"])}), had no release or auction in the calendar that day. '
+                    f'<span class="unknown">Unknown</span> driver. {_tag("Observation")}</p>')
     items = []
     labels = cand.get("type_labels") or {}
     for c in cand.get("items") or []:

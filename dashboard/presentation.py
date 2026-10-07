@@ -159,7 +159,7 @@ TYPE_LABELS = {"corporate_deal": "Corporate financing", "treasury_auction": "Tre
 def _candidates(result: Mapping[str, Any]) -> dict[str, Any]:
     """Ranked candidates plus a one-sentence verdict for the top one (an INFERENCE)."""
     items = list(result.get("candidates") or [])
-    top = items[0] if items else None
+    top = next((c for c in items if c.get("testable", True)), None)
     verdict = None
     if top:
         share = top["passed"] / top["applicable"] if top["applicable"] else 0
@@ -168,7 +168,12 @@ def _candidates(result: Mapping[str, Any]) -> dict[str, Any]:
         verdict = f"{lead}: {top['name']}. Passes {top['passed']} of {top['applicable']} checks."
         if failed:
             verdict += f" Not consistent: {failed[0]['check'].lower()} ({failed[0]['detail']})."
+    biggest = result.get("biggest_day")
+    unexplained = None
+    if biggest and not any(c["date"] == biggest["date"] for c in items if c["type"] != "corporate_deal"):
+        unexplained = biggest
     return {"status": result.get("status"), "window": result.get("window"), "items": items,
+            "unexplained_biggest_day": unexplained,
             "verdict": verdict, "limitations": list(result.get("limitations") or []),
             "type_labels": TYPE_LABELS}
 

@@ -7,7 +7,7 @@ from typing import Any
 
 from treasury_flow_radar.analytics.report import load_observations_read_only
 from treasury_flow_radar.analytics.research import build_research_report
-from treasury_flow_radar.events import load_deals
+from treasury_flow_radar.events import load_deals, load_fomc_decisions
 
 
 def load_dashboard_report(database_path: str | Path) -> dict[str, Any]:
@@ -19,5 +19,6 @@ def load_dashboard_report(database_path: str | Path) -> dict[str, Any]:
     dates = [date.fromisoformat(str(row["observation_time"])[:10]) for row in rows]
     start = min(dates) if dates else datetime.now(UTC).date()
     end = max(dates) if dates else start
-    return build_research_report(rows, start_date=start, end_date=end, deals=load_deals())
+    return build_research_report(rows, start_date=start, end_date=end, deals=load_deals(),
+                                 fomc_decisions=load_fomc_decisions())
 

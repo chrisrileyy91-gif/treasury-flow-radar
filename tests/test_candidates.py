@@ -117,3 +117,19 @@ def test_shipped_ledger_is_valid_and_tranches_match_stated_size():
     paramount = next(d for d in deals if d["id"].startswith("paramount"))
     usd = sum(t["amount"] for t in paramount["tranches"] if t["currency"] == "USD")
     assert usd == paramount["size_usd"]
+
+
+def test_candidate_with_only_timing_testable_ranks_last():
+    days = sessions("2026-10-01", 7)
+    ten = [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.06]
+    two = [4.8] * 6 + [4.88]
+    weekend = (days[-1] - timedelta(days=days[-1].weekday() + 1)).isoformat()   # the Sunday before
+    result = evaluate_candidates(
+        yields=_yields(days, ten, two, [5.4] * 6 + [5.42]),
+        decomposition_by_date={days[-1].isoformat(): {"windows": {"1": {
+            "nominal_bps": 6, "breakeven_bps": 0, "curve": {"led_by": "short end", "short_change_bps": 8}}}}},
+        auctions=[], deals=[],
+        releases=[{"date": weekend, "kind": "policy", "short": "Weekend item"},
+                  {"date": days[-1].isoformat(), "kind": "labor", "short": "Jobs report"}])
+    assert [c["name"] for c in result["candidates"]] == ["Jobs report", "Weekend item"]
+    assert result["candidates"][1]["testable"] is False
