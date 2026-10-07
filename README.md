@@ -300,7 +300,7 @@ Evidence records distinguish FACT, CALCULATION, OBSERVATION, MECHANISM, INFERENC
 
 ## The published page (phone URL)
 
-The page is published at **https://chrisrileyy91-gif.github.io/treasury-flow-radar/** by the `Publish Treasury Flow Radar` GitHub Actions workflow (`.github/workflows/publish.yml`). It runs every weekday evening (01:17 UTC Tuesday–Saturday, about 9:17 pm Eastern) and can also be started by hand from the repository's Actions tab ("Run workflow").
+The page is published at **https://chrisrileyy91-gif.github.io/treasury-flow-radar/** by the `Publish Treasury Flow Radar` GitHub Actions workflow (`.github/workflows/publish.yml`). It is started at 6:00 pm New York time on weekdays by [meridian-clock](https://github.com/chrisrileyy91-gif/meridian-clock) (which dispatches workflows on New York time because GitHub's own cron runs late), and can also be started by hand from the repository's Actions tab ("Run workflow"). The workflow has no `schedule:` block on purpose.
 
 Each run:
 

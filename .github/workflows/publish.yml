@@ -6,11 +6,12 @@
 # and publishes the static page to GitHub Pages.
 name: Publish Treasury Flow Radar
 
+# Scheduling: meridian-clock (Railway) dispatches this workflow at 18:00 New York time
+# on weekdays; see schedule.json in that repo. Do not add a `schedule:` block here: the
+# clock counts any run today as "already ran", so a cron run would make it skip.
+# FRED posts each day's yields the following afternoon, NY Fed dealer data Thursdays
+# around 16:15, CFTC data Fridays at 15:30, so an 18:00 run picks up each release.
 on:
-  schedule:
-    # 01:17 UTC Tue-Sat = 9:17 pm Eastern (EDT) Mon-Fri. FRED posts each day's yields
-    # the following afternoon, NY Fed dealer data on Thursdays, CFTC data on Fridays.
-    - cron: "17 1 * * 2-6"
   workflow_dispatch:
 
 permissions:
