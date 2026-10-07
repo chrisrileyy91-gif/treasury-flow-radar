@@ -102,6 +102,11 @@ def _nowrap_terms(text: str) -> str:
     return re.sub(r"(\d+-year)", r'<span class="nw">\1</span>', text)
 
 
+def _friendly_dates(text: str) -> str:
+    """Show ISO dates inside sentences as "Sep 30"."""
+    return re.sub(r"\b(\d{4}-\d{2}-\d{2})\b", lambda m: str(_day(m.group(1), year=False)), text)
+
+
 def _tag(kind: str) -> _Html:
     return _Html(f'<span class="tag">{escape(kind)}</span>')
 
@@ -153,7 +158,9 @@ def _happening(view: dict[str, Any]) -> str:
         marks += "; see the list further down."
     return f'''<section id="happening" aria-labelledby="h-happening">
 <h1 id="h-happening">What is happening?</h1>
+{_level(view.get("level"))}
 {lead}
+{_candidate_block(view)}
 {_channel(view["channel"])}
 <figure class="chart" data-chart="curve" aria-label="Treasury yield curve: latest versus 5 and 20 sessions earlier">
 <figcaption>Yield curve: latest versus 5 and 20 sessions earlier</figcaption>
@@ -166,6 +173,72 @@ def _happening(view: dict[str, Any]) -> str:
 <div class="plot"></div></figure>
 <p class="source">Source: FRED constant-maturity yields, end of day. Market-closed dates are skipped, never filled. {_tag("Fact")}</p>
 </section>'''
+
+
+def _level(level: dict[str, Any] | None) -> str:
+    if not level:
+        return '<p class="level"><span class="unknown">No 10-year yield stored yet.</span></p>'
+    if level["highest_in_history"]:
+        context = f"the highest close in the stored history (since {_day(level['history_start'])})"
+    else:
+        context = f"highest since {_day(level['last_at_or_above'])}"
+    return (f'<p class="level"><span class="level-figure">10-year {float(level["percent"]):.2f}%</span> '
+            f'<span class="level-tag">{escape(level["label"])}</span> '
+            f'<span class="level-context">{_ordinal(level["percentile"])} percentile of {level["sessions"]} sessions; '
+            f'{context}. As of {_day(level["date"])}. {_tag("Calculation")}</span></p>')
+
+
+def _ordinal(value: float) -> str:
+    n = round(value)
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+MARKS = {"pass": ("✓", "Passed"), "fail": ("✗", "Failed"), "n/a": ("–", "Not applicable")}
+
+
+def _candidate_block(view: dict[str, Any]) -> str:
+    cand = view.get("candidates") or {}
+    window = cand.get("window")
+    span = f"{_day(window['start'], year=False)} close to {_day(window['end'], year=False)}" if window else "the latest sessions"
+    if cand.get("verdict"):
+        verdict = f'<p class="verdict">{_nowrap_terms(escape(_friendly_dates(cand["verdict"])))} {_tag("Inference")}</p>'
+    elif cand.get("status") == "INSUFFICIENT DATA":
+        verdict = '<p class="verdict"><span class="unknown">Not enough yield history to test candidates.</span></p>'
+    else:
+        verdict = ('<p class="verdict">No candidate in the calendar for this window. '
+                   '<span class="unknown">Unknown</span>: other news and deals not in the ledger are not covered.</p>')
+    items = []
+    labels = cand.get("type_labels") or {}
+    for c in cand.get("items") or []:
+        checks = "".join(
+            f'<li class="chk {c2["status"].replace("/", "")}"><span class="mark" aria-label="{MARKS[c2["status"]][1]}">'
+            f'{MARKS[c2["status"]][0]}</span> <strong>{escape(c2["check"])}</strong>: {escape(_friendly_dates(c2["detail"]))}</li>'
+            for c2 in c["checks"])
+        dates = ""
+        if c["type"] == "corporate_deal":
+            d = c.get("dates") or {}
+            parts = [f"launched {_day(d['launch_date'], year=False)}" if d.get("launch_date") else "",
+                     f"priced {_day(d['pricing_date'], year=False)}",
+                     (f"notes expected to settle {_day(d['settlement_date_expected'], year=False)} (not confirmed)"
+                      if d.get("settlement_date_expected") else ""),
+                     f"acquisition closed {_day(d['transaction_close_date'], year=False)}" if d.get("transaction_close_date") else ""]
+            dates = "; ".join(p for p in parts if p)
+            links = ", ".join(f'<a href="{escape(src["url"])}">{escape(src.get("title") or "source")}</a>'
+                              for src in c.get("sources") or [])
+            dates = f'<p class="small">{escape(dates)}. Sources: {links}</p>'
+        else:
+            dates = f'<p class="small">{escape(labels.get(c["type"], ""))} on {_day(c["date"])}.</p>'
+        items.append(f'''<details class="cand"{" open" if not items else ""}><summary><span class="cand-name">{escape(c["name"])}</span>
+<span class="score">{c["passed"]} of {c["applicable"]} checks</span></summary>
+{dates}<ul class="checks">{checks}</ul>
+<p class="small">{_tag("Mechanism")} {escape(c.get("mechanism") or "")}</p></details>''')
+    limits = "".join(f"<li>{escape(x)}</li>" for x in cand.get("limitations") or [])
+    return f'''<h2 class="sub-q" id="h-candidates">What could explain it?</h2>
+<p class="small">Candidates in the window from the {escape(span)}, ranked by the share of checks they pass. Corporate deals are checked against the rate-lock pattern: yields rise before pricing, led by the long end, and the long end reverses after.</p>
+{verdict}
+{"".join(items)}
+<details class="more"><summary>What this ranking cannot tell you</summary><ul class="limits">{limits}<li>Hedge trades are not observable in public data, so a deal can only ever be a consistent candidate, never a confirmed cause.</li></ul></details>'''
 
 
 def _channel(channel: dict[str, Any]) -> str:
@@ -506,6 +579,19 @@ h2{font-size:24px}
 h3{font-size:16px;margin:0 0 6px}
 h3.sub{margin-top:22px}
 h2.sub-q{font-size:20px;margin-top:22px}
+.level{margin:0 0 6px;line-height:1.35}
+.level-figure{font-family:var(--serif);font-size:34px;font-weight:600;font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.level-tag{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.02em;border:1.5px solid var(--ink);border-radius:3px;padding:0 6px;margin:0 4px;vertical-align:6px}
+.level-context{display:block;font-size:14px;color:var(--ink-2);margin-top:2px}
+.verdict{font-family:var(--serif);font-size:19px;line-height:1.45;margin:4px 0 12px;max-width:38em}
+details.cand{border:1px solid var(--rule);border-radius:4px;padding:0 12px;margin:0 0 10px;max-width:42em}
+details.cand summary{cursor:pointer;display:flex;justify-content:space-between;gap:12px;padding:10px 0;font-weight:600}
+.score{white-space:nowrap;color:var(--ink-2);font-weight:500;font-variant-numeric:tabular-nums}
+ul.checks{list-style:none;padding:0;margin:4px 0 8px;font-size:14px}
+ul.checks li{padding:4px 0 4px 24px;position:relative;color:var(--ink-2)}
+ul.checks li strong{color:var(--ink);font-weight:600}
+ul.checks .mark{position:absolute;left:0;top:3px;width:18px;text-align:center;font-weight:700;color:var(--ink)}
+ul.checks li.fail .mark{color:var(--ink-3)}
 .lead{font-family:var(--serif);font-size:21px;line-height:1.45;margin:0 0 18px;max-width:38em}
 .lead-sm{margin:0 0 14px;max-width:40em}
 .figure{font-family:var(--serif);font-size:26px;font-weight:600}

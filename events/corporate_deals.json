@@ -1,0 +1,47 @@
+{
+  "about": "Curated, source-cited corporate financing events used as candidate explanations. Every field must be supported by a listed source. Amounts are in the stated currency. Floating-rate loans are recorded for context but excluded from rate-risk estimates.",
+  "deals": [
+    {
+      "id": "paramount-skydance-wbd-notes-2026",
+      "name": "Paramount Skydance financing for Warner Bros. Discovery",
+      "issuer": "Paramount Skydance Corporation",
+      "market": "Rule 144A / Regulation S notes (not SEC-registered)",
+      "launch_date": "2026-09-28",
+      "pricing_date": "2026-09-30",
+      "settlement_date_expected": "2026-10-05",
+      "settlement_status": "expected per the Oct 1 release; actual settlement not confirmed by a source",
+      "transaction_close_date": "2026-10-06",
+      "size_usd": 41400000000,
+      "tranches": [
+        {"lien": "first", "currency": "USD", "amount": 3500000000, "maturity_year": 2028, "coupon_percent": 6.30},
+        {"lien": "first", "currency": "USD", "amount": 3500000000, "maturity_year": 2029, "coupon_percent": 6.55},
+        {"lien": "first", "currency": "USD", "amount": 6500000000, "maturity_year": 2031, "coupon_percent": 7.05},
+        {"lien": "first", "currency": "USD", "amount": 5250000000, "maturity_year": 2033, "coupon_percent": 7.55},
+        {"lien": "first", "currency": "USD", "amount": 5250000000, "maturity_year": 2036, "coupon_percent": 7.90},
+        {"lien": "first", "currency": "USD", "amount": 1250000000, "maturity_year": 2046, "coupon_percent": 8.65},
+        {"lien": "first", "currency": "USD", "amount": 3500000000, "maturity_year": 2056, "coupon_percent": 8.75},
+        {"lien": "first", "currency": "USD", "amount": 1250000000, "maturity_year": 2066, "coupon_percent": 8.90},
+        {"lien": "second", "currency": "USD", "amount": 6000000000, "maturity_year": 2031, "coupon_percent": 8.25},
+        {"lien": "second", "currency": "EUR", "amount": 885000000, "maturity_year": 2031, "coupon_percent": 7.00},
+        {"lien": "second", "currency": "USD", "amount": 4000000000, "maturity_year": 2034, "coupon_percent": 8.875},
+        {"lien": "second", "currency": "USD", "amount": 1400000000, "maturity_year": 2036, "coupon_percent": 9.125}
+      ],
+      "loans": [
+        {"type": "term loan B", "currency": "USD", "amount": 8500000000, "maturity_year": 2033},
+        {"type": "term loan B", "currency": "EUR", "amount": 850000000, "maturity_year": 2033}
+      ],
+      "credit_note": "Reported as roughly $32B investment-grade-rated and $12.4B high-yield; S&P cut the issuer to BB from BB+ on Sep 24, 2026.",
+      "sources": [
+        {"url": "https://www.placera.se/pressmeddelanden/paramount-skydance-corporation-announces-41-4-billion-and-885-million-senior-secured-notes-offerings-and-8-5-billion-and-850-million-term-loan-b-facility-pricing-20261001",
+         "title": "Paramount Skydance announces $41.4B and €885M senior secured notes and term loan B pricing", "published": "2026-10-01",
+         "supports": ["pricing_date", "settlement_date_expected", "size_usd", "tranches", "loans", "market"]},
+        {"url": "https://247wallst.com/investing/2026/09/29/paramount-just-launched-a-44-billion-debt-sale-to-buy-warner-bros/",
+         "title": "Paramount just launched a $44 billion debt sale to buy Warner Bros", "published": "2026-09-29",
+         "supports": ["launch_date", "credit_note"]},
+        {"url": "https://www.skydance.com/news/press/paramount-completes-acquisition-of-warner-bros-discovery-creating-a-new-global-entertainment-leader-skydance",
+         "title": "Paramount completes acquisition of Warner Bros. Discovery", "published": "2026-10-06",
+         "supports": ["transaction_close_date"]}
+      ]
+    }
+  ]
+}

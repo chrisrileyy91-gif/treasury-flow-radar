@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime
 from typing import Any
 
+from treasury_flow_radar.analytics.candidates import evaluate_candidates, level_context
 from treasury_flow_radar.analytics.decomposition import decompose_moves
 from treasury_flow_radar.analytics.descriptive import (
     EvidenceType,
@@ -67,6 +68,7 @@ def build_research_report(
     end_date: date,
     threshold_bps: float = 5.0,
     auction_window_days: int = 3,
+    deals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-ready report from normalized observation rows.
 
@@ -89,6 +91,13 @@ def build_research_report(
     }
     curves = curve_metrics(observations)
     decomposition = decompose_moves(observations)
+    yield_levels = {sid: {m.observation_time: m.yield_percent for m in metrics if m.yield_percent is not None}
+                    for sid, metrics in yields.items()}
+    releases = [
+        {"date": str(r.get("observation_time"))[:10], **{k: (r.get("metadata") or {}).get(k)
+         for k in ("release_id", "short_name", "kind")}, "name": r.get("value_text"),
+         "short": (r.get("metadata") or {}).get("short_name")}
+        for r in source_rows if str(r.get("series_identifier") or "").startswith("FRED_RELEASE_")]
     curve_by_day = {m.observation_time: m for m in curves}
     yield_by_series_day = {
         sid: {m.observation_time: m for m in metrics} for sid, metrics in yields.items()
@@ -468,6 +477,11 @@ def build_research_report(
         "events": event_summaries,
         "move_decomposition": {"latest": decomposition["latest"],
                                "term_premium": decomposition["term_premium"]},
+        "level": level_context(yield_levels.get("DGS10", {})),
+        "candidates": evaluate_candidates(
+            yields=yield_levels, decomposition_by_date=decomposition["by_date"],
+            auctions=auctions, releases=releases, deals=list(deals or [])),
+        "curated_deal_count": len(deals or []),
         "dealer_positions": dealer_summaries,
         "cftc_positions": cftc_summaries,
         "treasury_auctions": auctions,

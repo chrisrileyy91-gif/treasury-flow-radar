@@ -55,6 +55,9 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
         "curve": curve,
         "curve_read": _curve_read(curve["rows"]),
         "channel": _channel(report.get("move_decomposition") or {}),
+        "level": report.get("level"),
+        "candidates": _candidates(report.get("candidates") or {}),
+        "curated_deal_count": report.get("curated_deal_count", 0),
         "ten_year_history": _ten_year_history(ten, all_events),
         "spread": None if spread is None else {
             "spread_bps": spread.get("spread_bps"), "daily_change_bps": spread.get("daily_change_bps"),
@@ -147,6 +150,27 @@ def _curve_read(rows: list[dict[str, Any]]) -> str | None:
             shape = "steepened" if gap > 0 else "flattened"
             text += f" The 2-year to 30-year spread {shape} by {abs(gap):.0f} bp."
     return text
+
+
+TYPE_LABELS = {"corporate_deal": "Corporate financing", "treasury_auction": "Treasury auction",
+               "macro_release": "Economic release"}
+
+
+def _candidates(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Ranked candidates plus a one-sentence verdict for the top one (an INFERENCE)."""
+    items = list(result.get("candidates") or [])
+    top = items[0] if items else None
+    verdict = None
+    if top:
+        share = top["passed"] / top["applicable"] if top["applicable"] else 0
+        failed = [c for c in top["checks"] if c["status"] == "fail"]
+        lead = "Top candidate" if share > 0.5 else "Weak fit only. Best available candidate"
+        verdict = f"{lead}: {top['name']}. Passes {top['passed']} of {top['applicable']} checks."
+        if failed:
+            verdict += f" Not consistent: {failed[0]['check'].lower()} ({failed[0]['detail']})."
+    return {"status": result.get("status"), "window": result.get("window"), "items": items,
+            "verdict": verdict, "limitations": list(result.get("limitations") or []),
+            "type_labels": TYPE_LABELS}
 
 
 def _channel(decomposition: Mapping[str, Any]) -> dict[str, Any]:
