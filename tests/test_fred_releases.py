@@ -51,8 +51,8 @@ def test_ingest_stores_dated_text_facts_idempotently(tmp_path):
     payloads = {10: _payload(10, ["2026-09-11"]), 50: _payload(50, ["2026-10-02"]),
                 54: _payload(54, ["2026-09-26"])}
     client = FredClient(api_key="a" * 32, opener=_opener(payloads), clock=lambda: datetime(2026, 10, 7, tzinfo=UTC))
-    first = ingest_release_dates(database_path=db, client=client)
-    again = ingest_release_dates(database_path=db, client=client)
+    first = ingest_release_dates(database_path=db, client=client, release_ids=(10, 50, 54))
+    again = ingest_release_dates(database_path=db, client=client, release_ids=(10, 50, 54))
     assert first["inserted"] == 3 and again["inserted"] == 0 and again["unchanged"] == 3
     with database(db) as conn:
         rows = get_observations(conn)

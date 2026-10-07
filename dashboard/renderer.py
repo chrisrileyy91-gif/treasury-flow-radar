@@ -200,7 +200,7 @@ MARKS = {"pass": ("✓", "Passed"), "fail": ("✗", "Failed"), "n/a": ("–", "N
 def _candidate_block(view: dict[str, Any]) -> str:
     cand = view.get("candidates") or {}
     window = cand.get("window")
-    span = f"{_day(window['start'], year=False)} close to {_day(window['end'], year=False)}" if window else "the latest sessions"
+    span = f"{_day(window['start'], year=False)} to {_day(window['end'], year=False)}" if window else "the latest sessions"
     if cand.get("verdict"):
         verdict = f'<p class="verdict">{_nowrap_terms(escape(_friendly_dates(cand["verdict"])))} {_tag("Inference")}</p>'
     elif cand.get("status") == "INSUFFICIENT DATA":
@@ -213,6 +213,15 @@ def _candidate_block(view: dict[str, Any]) -> str:
         verdict += (f'<p class="note">The window\'s largest 10-year session, {_day(gap["date"], year=False)} '
                     f'({_bp(gap["change_bps"])}), had no release or auction in the calendar that day. '
                     f'<span class="unknown">Unknown</span> driver. {_tag("Observation")}</p>')
+    bars = cand.get("bars") or []
+    if bars:
+        rows = "".join(
+            f'<div class="bar-row{" unexpl" if b.get("unexplained") else ""}"><span class="bar-name">{escape(b["name"])}</span>'
+            f'<span class="bar-track"><span class="bar-fill" style="width:{max(b["share"], 0.01) * 100:.1f}%"></span></span>'
+            f'<span class="bar-val">{b["share"]:.0%}</span></div>' for b in bars)
+        verdict += (f'<div class="bars" role="img" aria-label="Share of the window\'s 10-year movement by candidate">{rows}</div>'
+                    f'<p class="small">Share of the 10-year\'s total movement ({float(cand.get("total_bps") or 0):.0f} bp of '
+                    f'session-by-session moves, {escape(span)}) assigned to each candidate by the formula below.</p>')
     items = []
     labels = cand.get("type_labels") or {}
     for c in cand.get("items") or []:
@@ -234,15 +243,17 @@ def _candidate_block(view: dict[str, Any]) -> str:
             dates = f'<p class="small">{escape(dates)}. Sources: {links}</p>'
         else:
             dates = f'<p class="small">{escape(labels.get(c["type"], ""))} on {_day(c["date"])}.</p>'
+        share_text = "" if c.get("share") is None else f"{c['share']:.0%} · "
         items.append(f'''<details class="cand"{" open" if not items else ""}><summary><span class="cand-name">{escape(c["name"])}</span>
-<span class="score">{c["passed"]} of {c["applicable"]} checks</span></summary>
+<span class="score">{share_text}{c["passed"]} of {c["applicable"]} checks</span></summary>
 {dates}<ul class="checks">{checks}</ul>
 <p class="small">{_tag("Mechanism")} {escape(c.get("mechanism") or "")}</p></details>''')
     limits = "".join(f"<li>{escape(x)}</li>" for x in cand.get("limitations") or [])
     return f'''<h2 class="sub-q" id="h-candidates">What could explain it?</h2>
-<p class="small">Candidates in the window from the {escape(span)}, ranked by the share of checks they pass. Corporate deals are checked against the rate-lock pattern: yields rise before pricing, led by the long end, and the long end reverses after.</p>
+<p class="small">Sessions {escape(span)}. Each candidate is credited with the part of each day's 10-year move that its mechanism fits; the rest is unexplained. Corporate deals are checked against the rate-lock pattern: yields rise before pricing, led by the long end, and the long end reverses after.</p>
 {verdict}
 {"".join(items)}
+<details class="more"><summary>The formula and its assumptions</summary><ul class="limits">{"".join(f"<li>{escape(x)}</li>" for x in cand.get("assumptions") or [])}<li>Each session's absolute 10-year move is split across the candidates active that day in proportion to prior × fit; whatever their weights do not cover is unexplained.</li></ul></details>
 <details class="more"><summary>What this ranking cannot tell you</summary><ul class="limits">{limits}<li>Hedge trades are not observable in public data, so a deal can only ever be a consistent candidate, never a confirmed cause.</li></ul></details>'''
 
 
@@ -591,6 +602,14 @@ h2.sub-q{font-size:20px;margin-top:22px}
 .verdict{font-family:var(--serif);font-size:19px;line-height:1.45;margin:4px 0 12px;max-width:38em}
 details.cand{border:1px solid var(--rule);border-radius:4px;padding:0 12px;margin:0 0 10px;max-width:42em}
 details.cand summary{cursor:pointer;display:flex;justify-content:space-between;gap:12px;padding:10px 0;font-weight:600}
+.bars{margin:6px 0 4px;max-width:42em}
+.bar-row{display:grid;grid-template-columns:minmax(0,11em) 1fr 3em;gap:10px;align-items:center;font-size:14px;padding:3px 0}
+.bar-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-track{height:10px;background:var(--rule-2);border-radius:2px;overflow:hidden}
+.bar-fill{display:block;height:100%;background:var(--line);border-radius:2px}
+.bar-row.unexpl .bar-fill{background:repeating-linear-gradient(135deg,var(--ink-3) 0 2px,transparent 2px 6px)}
+.bar-row.unexpl .bar-name{color:var(--ink-2);font-style:italic}
+.bar-val{text-align:right;font-variant-numeric:tabular-nums}
 .score{white-space:nowrap;color:var(--ink-2);font-weight:500;font-variant-numeric:tabular-nums}
 ul.checks{list-style:none;padding:0;margin:4px 0 8px;font-size:14px}
 ul.checks li{padding:4px 0 4px 24px;position:relative;color:var(--ink-2)}

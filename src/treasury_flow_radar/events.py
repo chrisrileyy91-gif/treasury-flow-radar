@@ -66,5 +66,5 @@ def load_fomc_decisions(path: str | Path = DEFAULT_FOMC) -> list[dict[str, Any]]
         day = date.fromisoformat(meeting["decision_date"])
         events.append({"date": day.isoformat(), "kind": "policy",
                        "short": "FOMC decision" + (" (with projections)" if meeting.get("sep") else ""),
-                       "name": "FOMC statement", "source_url": source["url"]})
+                       "name": "FOMC statement", "source_url": source["url"], "weight": 1.0})
     return events

@@ -56,7 +56,7 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
         "curve_read": _curve_read(curve["rows"]),
         "channel": _channel(report.get("move_decomposition") or {}),
         "level": report.get("level"),
-        "candidates": _candidates(report.get("candidates") or {}),
+        "candidates": _candidates(report.get("candidates") or {}, report.get("attribution") or {}),
         "curated_deal_count": report.get("curated_deal_count", 0),
         "ten_year_history": _ten_year_history(ten, all_events),
         "spread": None if spread is None else {
@@ -156,23 +156,52 @@ TYPE_LABELS = {"corporate_deal": "Corporate financing", "treasury_auction": "Tre
                "macro_release": "Economic release"}
 
 
-def _candidates(result: Mapping[str, Any]) -> dict[str, Any]:
-    """Ranked candidates plus a one-sentence verdict for the top one (an INFERENCE)."""
-    items = list(result.get("candidates") or [])
-    top = next((c for c in items if c.get("testable", True)), None)
-    verdict = None
-    if top:
-        share = top["passed"] / top["applicable"] if top["applicable"] else 0
-        failed = [c for c in top["checks"] if c["status"] == "fail"]
-        lead = "Top candidate" if share > 0.5 else "Weak fit only. Best available candidate"
-        verdict = f"{lead}: {top['name']}. Passes {top['passed']} of {top['applicable']} checks."
-        if failed:
-            verdict += f" Not consistent: {failed[0]['check'].lower()} ({failed[0]['detail']})."
+def _verdict(attribution: Mapping[str, Any]) -> str | None:
+    """One sentence naming the best potential reason by share of movement explained (INFERENCE)."""
+    if attribution.get("status") != "AVAILABLE":
+        return None
+    total = attribution.get("total_abs_bps") or 0
+    unexplained = attribution.get("unexplained_share") or 0
+    best = attribution.get("best")
+    if not total:
+        return "The 10-year was essentially unchanged over the window, so there is nothing to attribute."
+    if best is None:
+        return f"No candidate fits this window: {unexplained:.0%} of the 10-year's movement is unexplained."
+    share = best["share"] or 0
+    strength = ("Most of the movement" if share >= 0.5 else "The largest explained part"
+                if share >= unexplained else "A minority of the movement")
+    text = (f"Best potential reason: {best['name']}, about {share:.0%} of the window's 10-year movement "
+            f"({best['attributed_bps']:.1f} of {total:.0f} bp). {strength} fits it.")
+    runner = next((c for c in attribution.get("candidates", [])[1:] if c["attributed_bps"] > 0), None)
+    if runner:
+        text += f" Next: {runner['name']} (about {runner['share']:.0%})."
+    if unexplained >= 0.05:
+        text += f" {unexplained:.0%} has no candidate."
+    return text
+
+
+def _candidates(result: Mapping[str, Any], attribution: Mapping[str, Any]) -> dict[str, Any]:
+    """Ranked candidates, their checks, and the formula's verdict (an INFERENCE)."""
+    shares = {(c["name"], c["date"]): c for c in attribution.get("candidates", [])}
+    items = []
+    for c in result.get("candidates") or []:
+        match = shares.get((c["name"], c["date"]))
+        items.append({**c, "attributed_bps": None if match is None else match["attributed_bps"],
+                      "share": None if match is None else match["share"]})
+    items.sort(key=lambda c: (-(c["attributed_bps"] or 0), not c.get("testable", True)))
+    verdict = _verdict(attribution)
     biggest = result.get("biggest_day")
     unexplained = None
     if biggest and not any(c["date"] == biggest["date"] for c in items if c["type"] != "corporate_deal"):
         unexplained = biggest
-    return {"status": result.get("status"), "window": result.get("window"), "items": items,
+    bars = [{"name": c["name"], "share": c["share"] or 0, "bps": c["attributed_bps"]}
+            for c in attribution.get("candidates", []) if c["attributed_bps"] > 0]
+    if attribution.get("status") == "AVAILABLE" and attribution.get("total_abs_bps"):
+        bars.append({"name": "Unexplained", "share": attribution.get("unexplained_share") or 0,
+                     "bps": attribution.get("unexplained_bps"), "unexplained": True})
+    return {"status": result.get("status"), "window": attribution.get("window") or result.get("window"),
+            "items": items, "bars": bars, "assumptions": list(attribution.get("assumptions") or []),
+            "total_bps": attribution.get("total_abs_bps"),
             "unexplained_biggest_day": unexplained,
             "verdict": verdict, "limitations": list(result.get("limitations") or []),
             "type_labels": TYPE_LABELS}

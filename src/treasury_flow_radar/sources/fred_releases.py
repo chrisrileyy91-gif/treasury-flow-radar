@@ -40,11 +40,21 @@ from treasury_flow_radar.sources.fred import (
 
 RELEASE_DATES_URL = "https://api.stlouisfed.org/fred/release/dates"
 # FRED release ids, confirmed on fred.stlouisfed.org/release?rid=N.
-RELEASES: dict[int, dict[str, str]] = {
-    10: {"name": "Consumer Price Index", "short": "CPI", "kind": "inflation"},
-    50: {"name": "Employment Situation", "short": "Jobs report", "kind": "labor"},
-    54: {"name": "Personal Income and Outlays", "short": "PCE / personal income", "kind": "inflation"},
+# "weight" is the attribution prior: how strongly the release type is expected to move
+# Treasuries (an explicit, adjustable assumption; see analytics/attribution.py).
+RELEASES: dict[int, dict[str, Any]] = {
+    10: {"name": "Consumer Price Index", "short": "CPI", "kind": "inflation", "weight": 1.0},
+    50: {"name": "Employment Situation", "short": "Jobs report", "kind": "labor", "weight": 1.0},
+    54: {"name": "Personal Income and Outlays", "short": "PCE / personal income", "kind": "inflation", "weight": 0.6},
+    53: {"name": "Gross Domestic Product", "short": "GDP", "kind": "growth", "weight": 0.6},
+    9: {"name": "Advance Monthly Sales for Retail and Food Services", "short": "Retail sales", "kind": "growth", "weight": 0.6},
+    46: {"name": "Producer Price Index", "short": "PPI", "kind": "inflation", "weight": 0.5},
+    192: {"name": "Job Openings and Labor Turnover Survey", "short": "JOLTS", "kind": "labor", "weight": 0.5},
+    180: {"name": "Unemployment Insurance Weekly Claims Report", "short": "Jobless claims", "kind": "labor", "weight": 0.4},
 }
+# A real publication calendar has at most weekly dates; more than this per year means the
+# FRED "release" tracks daily series updates rather than publication events.
+MAX_RELEASE_DATES_PER_YEAR = 70
 # Not used: FRED release 101 ("FOMC Press Release") records a release date on every day
 # because its series update daily, so it is not a meeting calendar. FOMC decision dates
 # come from events/fomc_meetings.json (Federal Reserve meeting calendar) instead.

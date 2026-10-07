@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime
 from typing import Any
 
+from treasury_flow_radar.analytics.attribution import attribute_window
 from treasury_flow_radar.analytics.candidates import evaluate_candidates, level_context
 from treasury_flow_radar.analytics.decomposition import decompose_moves
 from treasury_flow_radar.analytics.descriptive import (
@@ -21,7 +22,11 @@ from treasury_flow_radar.analytics.event_study import MARKET_SERIES, YIELD_SERIE
 from treasury_flow_radar.analytics.evidence import evidence_from_rows
 from treasury_flow_radar.analytics.issuance import analyze_issuance_event
 from treasury_flow_radar.analytics.temporal import align_observation
-from treasury_flow_radar.sources.fred_releases import EXCLUDED_RELEASE_IDS
+from treasury_flow_radar.sources.fred_releases import (
+    EXCLUDED_RELEASE_IDS,
+    MAX_RELEASE_DATES_PER_YEAR,
+    RELEASES,
+)
 
 
 def large_yield_moves(
@@ -95,12 +100,7 @@ def build_research_report(
     decomposition = decompose_moves(observations)
     yield_levels = {sid: {m.observation_time: m.yield_percent for m in metrics if m.yield_percent is not None}
                     for sid, metrics in yields.items()}
-    releases = [
-        {"date": str(r.get("observation_time"))[:10], **{k: (r.get("metadata") or {}).get(k)
-         for k in ("release_id", "short_name", "kind")}, "name": r.get("value_text"),
-         "short": (r.get("metadata") or {}).get("short_name")}
-        for r in source_rows if str(r.get("series_identifier") or "").startswith("FRED_RELEASE_")
-        and (r.get("metadata") or {}).get("release_id") not in EXCLUDED_RELEASE_IDS]
+    releases, calendar_notes = _release_calendar(source_rows)
     releases += list(fomc_decisions or [])
     curve_by_day = {m.observation_time: m for m in curves}
     yield_by_series_day = {
@@ -485,6 +485,10 @@ def build_research_report(
         "candidates": evaluate_candidates(
             yields=yield_levels, decomposition_by_date=decomposition["by_date"],
             auctions=auctions, releases=releases, deals=list(deals or [])),
+        "attribution": attribute_window(
+            yields=yield_levels, decomposition_by_date=decomposition["by_date"],
+            deals=list(deals or []), auctions=auctions, releases=releases),
+        "calendar_notes": calendar_notes,
         "curated_deal_count": len(deals or []),
         "dealer_positions": dealer_summaries,
         "cftc_positions": cftc_summaries,
@@ -513,6 +517,29 @@ def build_research_report(
         "evidence_taxonomy": [e.value for e in EvidenceType],
         "interpretation_limit": "Descriptive measurements only; timing and co-occurrence do not establish causality or intent.",
     }
+
+
+def _release_calendar(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Release dates for configured FRED releases, dropping any that are not a real calendar."""
+    by_release: dict[int, set[str]] = defaultdict(set)
+    for r in rows:
+        if not str(r.get("series_identifier") or "").startswith("FRED_RELEASE_"):
+            continue
+        rid = (r.get("metadata") or {}).get("release_id")
+        if rid in EXCLUDED_RELEASE_IDS or rid not in RELEASES:
+            continue
+        by_release[int(rid)].add(str(r.get("observation_time"))[:10])
+    releases, notes = [], []
+    for rid, days in sorted(by_release.items()):
+        ordered = sorted(days)
+        span_years = max((date.fromisoformat(ordered[-1]) - date.fromisoformat(ordered[0])).days / 365.25, 1.0)
+        if len(ordered) / span_years > MAX_RELEASE_DATES_PER_YEAR:
+            notes.append(f"{RELEASES[rid]['name']} excluded: {len(ordered)} dates is not a publication calendar.")
+            continue
+        info = RELEASES[rid]
+        releases.extend({"date": d, "release_id": rid, "name": info["name"], "short": info["short"],
+                         "kind": info["kind"], "weight": info["weight"]} for d in ordered)
+    return releases, notes
 
 
 def _corporate_events(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
