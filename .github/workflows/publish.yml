@@ -86,7 +86,8 @@ jobs:
           stamp=$(date -u +%Y-%m-%d)
           gzip -c "$DB" > treasury_flow_radar.sqlite3.gz
           cp treasury_flow_radar.sqlite3.gz "treasury_flow_radar-$stamp.sqlite3.gz"
-          gh release upload "$RELEASE" treasury_flow_radar.sqlite3.gz "treasury_flow_radar-$stamp.sqlite3.gz" --clobber
+          cp ingest-report.json status.json 2>/dev/null || echo '{}' > status.json
+          gh release upload "$RELEASE" treasury_flow_radar.sqlite3.gz "treasury_flow_radar-$stamp.sqlite3.gz" status.json --clobber
           # Keep the 14 most recent dated backups.
           gh release view "$RELEASE" --json assets -q '.assets[].name' \
             | grep -E '^treasury_flow_radar-[0-9]{4}-[0-9]{2}-[0-9]{2}\.sqlite3\.gz$' | sort -r | tail -n +15 \
