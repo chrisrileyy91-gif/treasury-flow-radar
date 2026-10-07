@@ -277,6 +277,7 @@ def build_research_report(
                       if "corporate" in str(r.get("source_type", "")).casefold()
                       or "corporate_issuance" in str(r.get("source_identifier", "")).casefold()]
     corporate_events = _corporate_events(corporate_rows)
+    all_deals = merge_deals(list(deals or []), edgar_deals(corporate_rows))
     corporate_configured = any(
         bool((r.get("source_metadata") or {}).get("event_level_source_selected"))
         for r in corporate_rows
@@ -484,12 +485,13 @@ def build_research_report(
         "level": level_context(yield_levels.get("DGS10", {})),
         "candidates": evaluate_candidates(
             yields=yield_levels, decomposition_by_date=decomposition["by_date"],
-            auctions=auctions, releases=releases, deals=list(deals or [])),
+            auctions=auctions, releases=releases, deals=all_deals),
         "attribution": attribute_window(
             yields=yield_levels, decomposition_by_date=decomposition["by_date"],
-            deals=list(deals or []), auctions=auctions, releases=releases),
+            deals=all_deals, auctions=auctions, releases=releases),
         "calendar_notes": calendar_notes,
         "curated_deal_count": len(deals or []),
+        "edgar_deal_count": len(all_deals) - len(deals or []),
         "dealer_positions": dealer_summaries,
         "cftc_positions": cftc_summaries,
         "treasury_auctions": auctions,
@@ -517,6 +519,55 @@ def build_research_report(
         "evidence_taxonomy": [e.value for e in EvidenceType],
         "interpretation_limit": "Descriptive measurements only; timing and co-occurrence do not establish causality or intent.",
     }
+
+
+def edgar_deals(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rebuild deals from stored EDGAR tranche facts, in the ledger's deal shape."""
+    tranches: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for row in rows:
+        metadata = row.get("metadata") or {}
+        native = metadata.get("source_native_fields") or {}
+        fields = metadata.get("issuance_event")
+        if not isinstance(fields, dict) or not native.get("filing_url") or not metadata.get("deal_identifier"):
+            continue
+        tranches[metadata["deal_identifier"]][metadata["source_record_id"]] = {**fields, "_native": native}
+    deals = []
+    for deal_id, items in tranches.items():
+        first = next(iter(items.values()))
+        parts = []
+        for item in items.values():
+            year = None
+            for key in ("benchmark_maturity", "maturity_date"):   # hedged tenor: benchmark when stated
+                if item.get(key):
+                    year = int(str(item[key])[:4])
+                    break
+            year = year or item["_native"].get("maturity_year")
+            parts.append({"currency": item.get("currency") or "USD", "amount": item.get("principal_amount"),
+                          "coupon_percent": item.get("coupon"), "maturity_year": year,
+                          "benchmark": bool(item.get("benchmark_maturity"))})
+        size = sum(float(p["amount"] or 0) for p in parts)
+        pricing = first.get("pricing_date") or first.get("settlement_date")
+        if not pricing:
+            continue
+        deals.append({"id": f"edgar-{deal_id}", "name": f"{first.get('issuer_name')} notes",
+                      "pricing_date": pricing, "launch_date": pricing,
+                      "settlement_date_expected": first.get("settlement_date"), "size_usd": size,
+                      "tranches": parts, "origin": "SEC EDGAR",
+                      "sources": [{"url": first["_native"]["filing_url"], "title": f"SEC filing ({first['_native'].get('form')})",
+                                   "supports": ["pricing_date", "settlement_date_expected", "size_usd", "tranches"]}],
+                      "extraction": first["_native"].get("extraction")})
+    return sorted(deals, key=lambda d: (d["pricing_date"], d["id"]))
+
+
+def merge_deals(curated: list[dict[str, Any]], discovered: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Curated ledger first; a discovered deal with the same pricing date and size within 5% is a duplicate."""
+    merged = list(curated)
+    for deal in discovered:
+        duplicate = any(c["pricing_date"] == deal["pricing_date"] and c.get("size_usd") and deal.get("size_usd")
+                        and abs(c["size_usd"] - deal["size_usd"]) <= 0.05 * c["size_usd"] for c in curated)
+        if not duplicate:
+            merged.append(deal)
+    return merged
 
 
 def _release_calendar(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:

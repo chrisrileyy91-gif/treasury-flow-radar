@@ -189,6 +189,9 @@ def _candidates(result: Mapping[str, Any], attribution: Mapping[str, Any]) -> di
         items.append({**c, "attributed_bps": None if match is None else match["attributed_bps"],
                       "share": None if match is None else match["share"]})
     items.sort(key=lambda c: (-(c["attributed_bps"] or 0), not c.get("testable", True)))
+    credited = [c for c in items if (c["attributed_bps"] or 0) > 0]
+    hidden = max(0, len(items) - max(len(credited), 6))
+    items = items[:max(len(credited), 6)]
     verdict = _verdict(attribution)
     biggest = result.get("biggest_day")
     unexplained = None
@@ -200,7 +203,7 @@ def _candidates(result: Mapping[str, Any], attribution: Mapping[str, Any]) -> di
         bars.append({"name": "Unexplained", "share": attribution.get("unexplained_share") or 0,
                      "bps": attribution.get("unexplained_bps"), "unexplained": True})
     return {"status": result.get("status"), "window": attribution.get("window") or result.get("window"),
-            "items": items, "bars": bars, "assumptions": list(attribution.get("assumptions") or []),
+            "items": items, "hidden_count": hidden, "bars": bars, "assumptions": list(attribution.get("assumptions") or []),
             "total_bps": attribution.get("total_abs_bps"),
             "unexplained_biggest_day": unexplained,
             "verdict": verdict, "limitations": list(result.get("limitations") or []),

@@ -248,6 +248,8 @@ def _candidate_block(view: dict[str, Any]) -> str:
 <span class="score">{share_text}{c["passed"]} of {c["applicable"]} checks</span></summary>
 {dates}<ul class="checks">{checks}</ul>
 <p class="small">{_tag("Mechanism")} {escape(c.get("mechanism") or "")}</p></details>''')
+    if cand.get("hidden_count"):
+        items.append(f'<p class="small">{cand["hidden_count"]} more candidates in the window were credited with no movement.</p>')
     limits = "".join(f"<li>{escape(x)}</li>" for x in cand.get("limitations") or [])
     return f'''<h2 class="sub-q" id="h-candidates">What could explain it?</h2>
 <p class="small">Sessions {escape(span)}. Each candidate is credited with the part of each day's 10-year move that its mechanism fits; the rest is unexplained. Corporate deals are checked against the rate-lock pattern: yields rise before pricing, led by the long end, and the long end reverses after.</p>

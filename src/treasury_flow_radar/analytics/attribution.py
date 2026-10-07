@@ -35,14 +35,18 @@ UNKNOWN_SIZE_DEAL_PRIOR = 0.5
 AUCTION_PRIOR = 0.5
 
 ASSUMPTIONS = [
+    (
     "Priors (how strongly each event type is expected to move Treasuries): FOMC decision, CPI, jobs report 1.0; "
     "PCE, GDP, retail sales 0.6; PPI, JOLTS 0.5; weekly jobless claims 0.4; coupon auction 0.5; corporate deal "
-    "= 10-year-equivalent size / $20B, capped at 1.",
+    "= 10-year-equivalent size / $20B, capped at 1."
+    ),
+    (
     "Fit: a deal's hedging window (launch to pricing) fits a long-end-led rise (1.0; even 0.5; short-led 0.25); "
     "the session after pricing and the settlement session fit a long-end-led fall the same way. Jobs, growth and "
     "policy news fit a short-end-led move (1.0; even 0.75; long-led 0.5). Inflation news fits a move where "
     "breakevens carry at least a third or the short end leads (1.0; otherwise 0.5). Auctions fit a rise into the "
-    "auction (1.0 if the matching end led, 0.5 otherwise). A move within ±0.5 bp is not attributed.",
+    "auction (1.0 if the matching end led, 0.5 otherwise). A move within ±0.5 bp is not attributed."
+    ),
 ]
 
 

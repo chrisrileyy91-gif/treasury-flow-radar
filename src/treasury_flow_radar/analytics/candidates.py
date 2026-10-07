@@ -111,7 +111,7 @@ def evaluate_candidates(*, yields: Mapping[str, Mapping[date, float]],
                                                              "change_bps": daily.get(biggest_day)},
             "candidates": candidates,
             "limitations": [
-                "Only deals entered in the curated ledger are considered; other large deals may be missing.",
+                "Deals come from SEC EDGAR pricing filings (registered term sheets; 144A press releases where readable) plus the curated ledger; deals announced only elsewhere are missed.",
                 "Macro releases covered: CPI, jobs report, PCE / personal income, FOMC decisions.",
                 "Passing checks means the timing and pattern are consistent with a candidate, not that it caused the move.",
             ]}

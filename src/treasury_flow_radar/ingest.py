@@ -17,6 +17,7 @@ from treasury_flow_radar.sources.cftc import ingest_cftc
 from treasury_flow_radar.sources.fred import ingest_fred
 from treasury_flow_radar.sources.fred_releases import ingest_release_dates
 from treasury_flow_radar.sources.nyfed import ingest_nyfed
+from treasury_flow_radar.sources.sec_edgar import ingest_edgar_pricings
 from treasury_flow_radar.sources.treasury_auctions import ingest_treasury_auctions
 
 DEFAULT_WINDOW_DAYS = 730
@@ -25,10 +26,11 @@ FRED_SOURCES = {
     "fred-dgs10": "DGS10", "fred-dgs30": "DGS30",
     "fred-dfii10": "DFII10", "fred-t10yie": "T10YIE", "fred-threefytp10": "THREEFYTP10",
 }
-SOURCE_NAMES = (*FRED_SOURCES, "fred-releases", "nyfed", "cftc", "treasury-auctions")
+SOURCE_NAMES = (*FRED_SOURCES, "fred-releases", "sec-edgar", "nyfed", "cftc", "treasury-auctions")
 SOURCE_LABELS = {
     **{key: f"FRED {series}" for key, series in FRED_SOURCES.items()},
-    "fred-releases": "FRED release calendar (CPI, jobs, PCE, FOMC)",
+    "fred-releases": "FRED release calendar (CPI, jobs, PCE, GDP, retail sales, PPI, JOLTS, claims)",
+    "sec-edgar": "SEC EDGAR corporate bond pricings (term sheets and press releases)",
     "nyfed": "NY Fed Primary Dealer Treasury positioning",
     "cftc": "CFTC Treasury futures positioning",
     "treasury-auctions": "U.S. Treasury auctions",
@@ -168,6 +170,9 @@ def run_ingestion(
         "fred-releases": lambda: ingest_release_dates(
             database_path=database_path, start_date=start, end_date=end,
         ),
+        "sec-edgar": lambda: ingest_edgar_pricings(
+            database_path=database_path, start_date=start, end_date=end,
+        ),
         "nyfed": lambda: ingest_nyfed(
             database_path=database_path, observation_start=start, observation_end=end,
         ),
@@ -189,7 +194,7 @@ def run_ingestion(
             ))
             continue
         source_identifier = {
-            **dict.fromkeys(FRED_SOURCES, "FRED"), "fred-releases": "FRED", "nyfed": "NYFED",
+            **dict.fromkeys(FRED_SOURCES, "FRED"), "fred-releases": "FRED", "sec-edgar": "SEC_EDGAR_PRICINGS", "nyfed": "NYFED",
             "cftc": "CFTC", "treasury-auctions": "U.S. Treasury Fiscal Data",
         }[key]
         series_identifier = FRED_SOURCES.get(key)

@@ -68,6 +68,12 @@ jobs:
         continue-on-error: true   # one failed provider should not block publishing the others
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # Optional. SEC asks automated clients to identify themselves; set this secret to
+          # "Name email@example.com" if EDGAR starts refusing the default project URL.
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          # Optional. Enables the capped (3/run) model fallback for press releases that
+          # pattern matching cannot read. Without it, those releases are skipped.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python -m treasury_flow_radar.ingest --database "$DB" | tee ingest-report.json
 
       - name: Check the database before saving it
