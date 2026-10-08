@@ -213,6 +213,23 @@ def _x_block(take: dict[str, Any] | None) -> str:
 formula's best fit (an inference), never a confirmed cause. Nothing here is a trading signal. {_tag("Inference")}</p>'''
 
 
+def _market_day(md: dict[str, Any] | None) -> str:
+    if not md:
+        return '<p class="note">Other markets that day: <span class="unknown">not stored</span>.</p>'
+    cells = md["session"]["cells"]
+    parts = []
+    for s in md["series"]:
+        c = cells.get(s["id"]) or {}
+        if c.get("change") is None:
+            continue
+        mark = "*" if c.get("unusual") else ""
+        unit = " bp" if s["kind"] == "bp" else ""
+        parts.append(f'{escape(s["short"])} {_signed(c["change"], s["kind"])}{unit}{mark}')
+    read = md["session"].get("read")
+    return (f'<p class="note">Other markets that day: {", ".join(parts)} (* = bigger than a usual day).'
+            f'{" " + escape(read) if read else ""} {_tag("Observation")}</p>')
+
+
 def _signed(value: float | None, unit: str) -> str:
     if value is None:
         return '<span class="unknown">pending</span>'
@@ -253,6 +270,11 @@ marks a move bigger than that market's usual day ({typical}).{lag_note} {_tag("O
 Source: FRED (S&amp;P Dow Jones Indices, ICE Data Indices, Federal Reserve H.10).</p>'''
 
 
+def _share_pct(value: float) -> str:
+    """A 0..1 share as a whole percent with a true minus sign."""
+    return f"{value:.0%}".replace("-", "\u2212")
+
+
 def _calibration_table(cand: dict[str, Any]) -> str:
     cal = cand.get("calibration") or {}
     rows = cand.get("calibration_rows") or []
@@ -264,7 +286,7 @@ def _calibration_table(cand: dict[str, Any]) -> str:
             clear = "Yes" if r["distinguishable"] else "No"
             body.append(f'<tr><td>{escape(r["type"])}</td><td class="r">{r["days"]}</td>'
                         f'<td class="r">{r["event_rms_bps"]:.1f}</td><td class="r">{r["prior"]:.2f}</td>'
-                        f'<td class="r">{_pct(r["low"])} to {_pct(r["high"])}</td><td>{clear}</td></tr>')
+                        f'<td class="r">{_share_pct(r["low"])} to {_share_pct(r["high"])}</td><td>{clear}</td></tr>')
         else:
             prior = "" if r.get("prior") is None else f'{r["prior"]:.2f}'
             body.append(f'<tr><td>{escape(r["type"])}</td><td class="r">{r["days"]}</td><td>–</td>'
@@ -522,6 +544,11 @@ def _missing(view: dict[str, Any]) -> str:
         coverage = "The database currently holds the Treasury-market side of the hypothesis (yields, curve, dealer and CFTC positioning, auctions) but not every corporate or cross-market input listed above."
     else:
         coverage = "The database is also missing Treasury-market evidence listed above, so even the Treasury side of the hypothesis is incomplete."
+    test_note = ("Each deal can now be checked one at a time. Testing whether large deals systematically coincide with "
+                 "pre-pricing Treasury pressure and a later reversal needs many more dated deals than the few weeks "
+                 "of SEC filings stored so far." if not lacking else
+                 "Therefore the system cannot currently test whether large corporate deals systematically coincide "
+                 "with pre-settlement Treasury pressure or post-settlement reversal.")
     checklist = f'''<div class="checklist">
 <div><h3>Have</h3><ul>{"".join(f"<li>{escape(i)}</li>" for i in have) or "<li>None</li>"}{"".join(f"<li>{escape(i)} (partial)</li>" for i in partial)}</ul></div>
 <div><h3>Missing</h3><ul>{"".join(f"<li>{escape(i)}</li>" for i in lacking) or "<li>None</li>"}</ul></div></div>'''
@@ -531,7 +558,7 @@ def _missing(view: dict[str, Any]) -> str:
 {"".join(panels)}
 <h3 class="sub">Rate-lock hypothesis: what can be tested today</h3>
 {checklist}
-<p class="note">{escape(coverage)} Therefore the system cannot currently test whether large corporate deals systematically coincide with pre-settlement Treasury pressure or post-settlement reversal. {_tag("Hypothesis")}</p>
+<p class="note">{escape(coverage)} {escape(test_note)} {_tag("Hypothesis")}</p>
 </section>'''
 
 
@@ -560,7 +587,7 @@ def _event_detail(event: dict[str, Any]) -> str:
 {_table(headers, rows, caption=caption)}
 <p class="note">10-year: {_bp(summary.get("pre_event_move_bps"))} from T−5 to T−1, {_bp(summary.get("event_day_move_bps"))} on T0, {_bp(summary.get("post_event_move_bps"))} from T0 to T+5. {_tag("Calculation")}</p>
 {_event_channel(event.get("channel"))}
-<p class="note">Nearby context: {escape("; ".join(context) or "no dealer or CFTC report on or before this date")}.{(" Auctions within 3 days: " + escape(auctions) + ".") if auctions else ""} Cross-market context is shown for the latest sessions only.</p>
+<p class="note">Nearby context: {escape("; ".join(context) or "no dealer or CFTC report on or before this date")}.{(" Auctions within 3 days: " + escape(auctions) + ".") if auctions else ""}</p>{_market_day(event.get("market_day"))}
 </div>'''
 
 

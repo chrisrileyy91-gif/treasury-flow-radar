@@ -95,12 +95,12 @@ def test_ingest_dedupes_coregistrants_skips_known_documents_and_stores_provenanc
     from treasury_flow_radar.analytics.report import load_observations_read_only
     from treasury_flow_radar.analytics.research import edgar_deals
     deals = edgar_deals(load_observations_read_only(db))
-    sysco = next(d for d in deals if d["name"].startswith("SYSCO"))
+    sysco = next(d for d in deals if d["name"].startswith("Sysco Corp notes ($3.9B)"))
     assert sysco["pricing_date"] == "2026-09-22" and sysco["settlement_date_expected"] == "2026-10-06"
     assert sysco["size_usd"] == pytest.approx(3.9e9)
     assert sorted(t["maturity_year"] for t in sysco["tranches"]) == [2031, 2033, 2036]   # benchmark tenor
     assert sysco["sources"][0]["url"].startswith("https://www.sec.gov/Archives/edgar/data/96021/")
-    example = next(d for d in deals if d["name"].startswith("EXAMPLE"))
+    example = next(d for d in deals if d["name"].startswith("Example Corp notes ($2.0B)"))
     assert example["pricing_date"] == "2026-10-02" and example["size_usd"] == pytest.approx(2.0e9)
     calls.clear()
     again = ingest_edgar_pricings(database_path=db, client=client, end_date=date(2026, 10, 7))

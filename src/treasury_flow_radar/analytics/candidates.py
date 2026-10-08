@@ -114,7 +114,7 @@ def evaluate_candidates(*, yields: Mapping[str, Mapping[date, float]],
             "candidates": candidates,
             "limitations": [
                 "Deals come from SEC EDGAR pricing filings (registered term sheets; 144A press releases where readable) plus the curated ledger; deals announced only elsewhere are missed.",
-                "Macro releases covered: CPI, jobs report, PCE / personal income, FOMC decisions.",
+                "Scheduled events covered: FOMC decisions; CPI, PPI and PCE; the jobs report, JOLTS and weekly jobless claims; GDP and retail sales; 2- to 30-year Treasury auctions. Unscheduled news (speeches, geopolitics, other countries' markets) is not covered.",
                 "Passing checks means the timing and pattern are consistent with a candidate, not that it caused the move.",
             ]}
 
@@ -159,7 +159,7 @@ def _deal(deal: Mapping[str, Any], yields: Mapping[str, Mapping[date, float]],
         "Large in 10-year terms",
         NA if equivalent is None else PASS if equivalent >= LARGE_DEAL_10Y_EQUIVALENT_USD else FAIL,
         "unknown" if equivalent is None else
-        f"about ${equivalent / 1e9:.0f}B of 10-year Treasuries; DV01 about ${risk['dv01_usd'] / 1e6:.1f}M per bp"))
+        f"about ${equivalent / 1e9:.{0 if equivalent >= 10e9 else 1}f}B of 10-year Treasuries; DV01 about ${risk['dv01_usd'] / 1e6:.1f}M per bp"))
     return {"type": "corporate_deal", "name": deal["name"], "date": pricing.isoformat(),
             "dates": {k: deal.get(k) for k in ("launch_date", "pricing_date", "settlement_date_expected",
                                                "settlement_status", "transaction_close_date")},

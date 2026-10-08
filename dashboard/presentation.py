@@ -396,10 +396,11 @@ def _candidates(result: Mapping[str, Any], attribution: Mapping[str, Any]) -> di
     verdict = _verdict(attribution)
     biggest = result.get("biggest_day")
     unexplained = None
-    if biggest and not any(c["date"] == biggest["date"] for c in items if c["type"] != "corporate_deal"):
+    if biggest and not any(c["date"] == biggest["date"] for c in result.get("candidates") or []
+                           if c["type"] != "corporate_deal"):
         unexplained = biggest
     bars = [{"name": c["name"], "share": c["share"] or 0, "bps": c["attributed_bps"]}
-            for c in attribution.get("candidates", []) if c["attributed_bps"] > 0]
+            for c in attribution.get("candidates", []) if (c["share"] or 0) >= 0.005]   # hide rows that round to 0%
     if attribution.get("status") == "AVAILABLE" and attribution.get("total_abs_bps"):
         bars.append({"name": "Unexplained", "share": attribution.get("unexplained_share") or 0,
                      "bps": attribution.get("unexplained_bps"), "unexplained": True})
@@ -436,7 +437,9 @@ def _channel_read(window: Mapping[str, Any], sessions: int) -> str | None:
         text += ". Real-yield and breakeven data for those dates are not stored yet, so the split is unknown."
     else:
         text += f": real yield {_bp(real)}, inflation breakeven {_bp(breakeven)}."
-        if abs(nominal) > 0.5:
+        if 0.5 < abs(nominal) < 2:
+            text += " The net move is too small to say which channel carried it."
+        elif abs(nominal) >= 2:
             same_real, same_be = real * nominal > 0, breakeven * nominal > 0
             if same_real and abs(real) >= abs(nominal) * 2 / 3:
                 text += " Most of the move came through the real yield."
@@ -461,7 +464,7 @@ def _join(items: list[str]) -> str:
 
 def _bp(value: float) -> str:
     rounded = round(value)
-    sign = "+" if rounded > 0 else "−" if rounded < 0 else "±"
+    sign = "+" if rounded > 0 else "−" if rounded < 0 else ""
     return f"{sign}{abs(rounded)} bp"
 
 
@@ -613,6 +616,7 @@ def _event_view(item: Mapping[str, Any]) -> dict[str, Any]:
     cftc = (item.get("cftc_context") or {}).get("contracts", [])
     auctions = (item.get("auction_context") or {}).get("auctions", [])
     return {
+        "market_day": item.get("market_day"),
         "date": event.get("event_date"),
         "prior_date": event.get("prior_observation_date"),
         "skipped": list(event.get("skipped_no_value_dates") or []),

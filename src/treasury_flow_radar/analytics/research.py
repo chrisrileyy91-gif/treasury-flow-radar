@@ -356,6 +356,7 @@ def build_research_report(
             "auction_context": next(c for c in auction_context if c["event_date"] == event["event_date"]),
             "event_study": study,
             "market_confirmation": study["market_confirmation"],
+            "market_day": _market_day(yield_levels.get("DGS10", {}), market_levels, event["event_date"]),
             "corporate_issuance_context": {
                 "status": corporate_status,
                 "events": nearby_issuance,
@@ -568,7 +569,9 @@ def edgar_deals(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         pricing = first.get("pricing_date") or first.get("settlement_date")
         if not pricing:
             continue
-        deals.append({"id": f"edgar-{deal_id}", "name": f"{first.get('issuer_name')} notes",
+        issuer = str(first.get("issuer_name") or "Unknown issuer")
+        issuer = issuer.title() if issuer.isupper() else issuer          # "SYSCO CORP" -> "Sysco Corp"
+        deals.append({"id": f"edgar-{deal_id}", "name": f"{issuer} notes (${size / 1e9:.{1 if size < 100e9 else 0}f}B)",
                       "pricing_date": pricing, "launch_date": pricing,
                       "settlement_date_expected": first.get("settlement_date"), "size_usd": size,
                       "tranches": parts, "origin": "SEC EDGAR",
@@ -587,6 +590,18 @@ def merge_deals(curated: list[dict[str, Any]], discovered: list[dict[str, Any]])
         if not duplicate:
             merged.append(deal)
     return merged
+
+
+def _market_day(ten: dict[date, float], market: dict[str, dict[date, float]], day: Any) -> dict[str, Any] | None:
+    """Cross-market changes on one past session (OBSERVATION), or None when not stored."""
+    when = date.fromisoformat(str(day)[:10])
+    context = market_context(ten_year=ten, market=market, window=[when])
+    if context.get("status") != "AVAILABLE":
+        return None
+    session = context["sessions"][0]
+    if all(c.get("change") is None for c in session["cells"].values()):
+        return None
+    return {"series": context["series"], "session": session}
 
 
 def _release_calendar(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
