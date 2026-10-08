@@ -57,6 +57,10 @@ MAX_DOCUMENTS = 60
 MAX_MODEL_DOCUMENTS = 3
 MIN_DEAL_USD = 500e6
 MODEL = "claude-haiku-4-5-20251001"
+# Bumped whenever extraction changes. Every run re-parses all stored filings and stamps the
+# tranches it writes; the report uses only tranches from the newest version present, so
+# tranches an older parser produced (and a newer one rejects) stop counting.
+PARSER_VERSION = 2
 QUERIES = (
     ("FWP", '"Spread to Benchmark Treasury"'),
     ("8-K", '"announces pricing" "senior notes"'),
@@ -89,6 +93,7 @@ class Pricing:
     settlement_date: date | None
     tranches: list[dict[str, Any]] = field(default_factory=list)
     method: str = "pattern"
+    document_sha256: str | None = None
 
 
 class _Text(HTMLParser):
@@ -137,57 +142,105 @@ def _money(amount: str, scale: str | None) -> float:
     return value
 
 
+TERM_LABELS = (
+    "Issuers?", "Securit(?:y|ies)(?:/Title)?", "Title(?: of (?:the )?Securities)?", "Security Type",
+    "(?:Aggregate )?Principal Amount(?: Offered)?", "Size", "Maturity(?: Date)?", "Coupon(?: \\(Interest Rate\\))?",
+    "Interest Rate", "Price to Public", "Public Offering Price", "(?:Re-?offer )?Yield to Maturity",
+    "Benchmark Treasury(?: Price and Yield| Yield| Price)?", "Spread to Benchmark(?: Treasury)?", "Trade Date",
+    "Pricing Date", "(?:Expected )?Settlement Date", "Interest Payment Dates", "Record Dates", "Optional Redemption",
+    "Make-whole Call", "Par Call", "CUSIP(?: Numbers?)?(?: ?/ ?ISINs?)?", "ISINs?", "Denominations", "Ratings[^:]{0,30}",
+    "First Reset Dates?", "Day Count Convention", "(?:Joint )?Book-Running Managers?", "Co-Managers?", "Use of Proceeds",
+)
+LABEL_RE = re.compile(r"(?<![A-Za-z])(" + "|".join(TERM_LABELS) + r")\s*(?:\([^)]{0,12}\))?\s*\**\s*:", re.IGNORECASE)
+AMOUNT_RE = re.compile(r"(?:US)?\$\s?([\d,]+(?:\.\d+)?)\s*(billion|million)?", re.IGNORECASE)
+PERCENT_RE = re.compile(r"(\d{1,2}\.\d+)\s*%")
+DATE_RE = re.compile(MONTH_DATE)
+# "4.375% due August 31, 2031": percent + "due" + full date. Note titles carry only a year,
+# so in a term sheet this shape identifies the benchmark Treasury.
+BENCHMARK_RE = re.compile(
+    r"(?:UST\s+|U\.S\. Treasury\s+)?(\d{1,2}\.\d+)\s*%\s+(?:UST\s+|U\.S\. Treasury\s+)?due\s+" + MONTH_DATE)
+SPREAD_RE = re.compile(r"T\s*\+\s*([\d.]+)\s*(?:bps|basis points)", re.IGNORECASE)
+TITLE_RE = re.compile(r"(\d{1,2}\.\d+)\s*%\s+[A-Za-z ,\-]{0,60}?(?:Notes|Debentures|Bonds)\s+due\s+(\d{4})", re.IGNORECASE)
+
+
+def _spans(flat: str) -> dict[str, list[str]]:
+    """Map each normalized label to the text runs that follow it, up to the next label."""
+    found = list(LABEL_RE.finditer(flat))
+    spans: dict[str, list[str]] = {}
+    for index, match in enumerate(found):
+        stop = found[index + 1].start() if index + 1 < len(found) else len(flat)
+        label = re.sub(r"\s+", " ", match.group(1)).lower()
+        spans.setdefault(label, []).append(flat[match.end():stop])
+    return spans
+
+
+def _values(spans: dict[str, list[str]], prefixes: tuple[str, ...], pattern: re.Pattern[str]) -> list[re.Match[str]]:
+    out: list[re.Match[str]] = []
+    for label, texts in spans.items():
+        if any(label == p or (label.startswith(p) and p.endswith(" date")) for p in prefixes):
+            for text in texts:
+                out.extend(pattern.finditer(text))
+    return out
+
+
 def parse_term_sheet(text: str) -> tuple[date | None, date | None, list[dict[str, Any]]]:
-    """Parse a final pricing term sheet (FWP). Returns trade date, settlement date, tranches."""
+    """Parse a final pricing term sheet (FWP). Returns trade date, settlement date, tranches.
+
+    Handles one label per tranche (sequential sheets) and one label followed by every
+    tranche's value (columnar sheets). A field is used only when its value count matches
+    the tranche count (or a single value applies to all); otherwise it stays unknown.
+    """
     flat = re.sub(r"\s+", " ", text)
-    amounts = [m for m in re.finditer(
-        r"(?:Aggregate )?Principal Amount(?: Offered)?\s*:?\s*(?:US)?\$\s?([\d,]+(?:\.\d+)?)\s*(billion|million)?",
-        flat, re.IGNORECASE)]
+    spans = _spans(flat)
+    amount_labels = tuple(l for l in spans if "principal amount" in l or l == "size")
+    amounts = [m for m in _values(spans, amount_labels, AMOUNT_RE) if _money(m.group(1), m.group(2)) >= 50e6]
     if not amounts:
         return None, None, []
+    n = len(amounts)
 
-    def field_values(pattern: str) -> list[re.Match[str]]:
-        return list(re.finditer(pattern, flat, re.IGNORECASE))
+    def fit(values: list[Any]) -> list[Any]:
+        if len(values) == n:
+            return values
+        if len(values) == 1 and n == 1:
+            return values
+        return [None] * n
 
-    coupons = field_values(r"Coupon(?: \(Interest Rate\))?(?: Rate)?\s*:?\s*(\d{1,2}\.\d+)\s*%")
-    maturities = field_values(r"Maturity(?: Date)?\s*:?\s*" + MONTH_DATE)
-    benchmarks = field_values(r"Benchmark Treasury\s*:?\s*(\d{1,2}\.\d+)\s*% due " + MONTH_DATE)
-    spreads = field_values(r"Spread to Benchmark(?: Treasury)?\s*:?\s*\+?\s*T?\s*\+\s*([\d.]+)\s*(?:bps|basis points)")
-    yields = field_values(r"(?:Re-?offer )?Yield to Maturity\s*:?\s*(\d{1,2}\.\d+)\s*%")
-    trade = re.search(r"(?:Trade|Pricing) Date\s*:?\s*" + MONTH_DATE, flat, re.IGNORECASE)
-    settle = re.search(r"Settlement(?: Date)?\s*:?\s*(?:\(?T\s*\+\s*\d+\)?\s*[;:,]?\s*)?" + MONTH_DATE, flat, re.IGNORECASE)
-
-    def pick(matches: list[re.Match[str]], index: int) -> re.Match[str] | None:
-        if len(matches) == len(amounts):
-            return matches[index]
-        if len(matches) == 1:
-            return matches[0]
-        # Otherwise use the last match that appears before the next tranche's amount.
-        limit = amounts[index + 1].start() if index + 1 < len(amounts) else len(flat)
-        start = amounts[index - 1].end() if index else 0
-        inside = [m for m in matches if start <= m.start() < limit]
-        return inside[-1] if inside else None
-
+    coupon_labels = tuple(l for l in spans if l.startswith("coupon") or l == "interest rate")
+    coupons = [float(m.group(1)) for m in _values(spans, coupon_labels, PERCENT_RE)]
+    titles = list(TITLE_RE.finditer(flat))
+    if len(coupons) != n:
+        # Coupons are often written inside the security title ("7.100% ... Notes due 2056").
+        seen, title_coupons = set(), []
+        for t in titles:
+            if (t.group(1), t.group(2)) not in seen:
+                seen.add((t.group(1), t.group(2)))
+                title_coupons.append(float(t.group(1)))
+        coupons = title_coupons if len(title_coupons) == n else coupons
+    maturities = [_parse_day(m.group(1)) for m in _values(spans, ("maturity date", "maturity"), DATE_RE)]
+    benchmarks = [_parse_day(m.group(2)) for m in BENCHMARK_RE.finditer(flat)]
+    spreads = [float(m.group(1)) for m in SPREAD_RE.finditer(flat)]
+    ytm_labels = tuple(l for l in spans if "yield to maturity" in l)
+    yields_ = [float(m.group(1)) for m in _values(spans, ytm_labels, PERCENT_RE)]
+    trade_matches = _values(spans, ("trade date", "pricing date"), DATE_RE)
+    settle_matches = _values(spans, ("settlement date", "expected settlement date"), DATE_RE)
+    coupon_list, maturity_list = fit(coupons), fit(maturities)
+    benchmark_list, spread_list, yield_list = fit(benchmarks), fit(spreads), fit(yields_)
     tranches = []
-    for index, amount in enumerate(amounts):
-        coupon, maturity, bench = pick(coupons, index), pick(maturities, index), pick(benchmarks, index)
-        spread, ytm = pick(spreads, index), pick(yields, index)
+    for i, amount in enumerate(amounts):
         tranches.append({
-            "principal_amount": _money(amount.group(1), amount.group(2)),
-            "coupon": None if coupon is None else float(coupon.group(1)),
-            "maturity_date": None if maturity is None else _parse_day(maturity.group(1)),
-            "benchmark_maturity": None if bench is None else _parse_day(bench.group(2)),
-            "spread": None if spread is None else float(spread.group(1)),
-            "yield": None if ytm is None else float(ytm.group(1)),
-        })
-    return (None if trade is None else _parse_day(trade.group(1)),
-            None if settle is None else _parse_day(settle.group(1)), tranches)
+            "principal_amount": _money(amount.group(1), amount.group(2)), "coupon": coupon_list[i],
+            "maturity_date": maturity_list[i], "benchmark_maturity": benchmark_list[i],
+            "spread": spread_list[i], "yield": yield_list[i]})
+    trade = _parse_day(trade_matches[0].group(1)) if trade_matches else None
+    settle = _parse_day(settle_matches[0].group(1)) if settle_matches else None
+    return trade, settle, tranches
 
 
 PRESS_TRANCHE = re.compile(
     r"\$\s?([\d,]+(?:\.\d+)?)\s*(billion|million)?\s+(?:in\s+)?(?:aggregate principal amount|principal amount)\s+of\s+"
     r"(?:its\s+|the\s+Company's\s+|our\s+)?(\d{1,2}\.\d+)\s*%\s+([^$.;]{0,80}?)\s*(?:notes|Notes|debentures|Debentures)\s+due\s+(\d{4})")
 EQUITY_LINKED = re.compile(r"convertible|exchangeable", re.IGNORECASE)
+PREVIOUSLY_ISSUED = re.compile(r"previously issued|existing|outstanding|currently has", re.IGNORECASE)
 
 
 def parse_press_release(text: str) -> tuple[date | None, list[dict[str, Any]]]:
@@ -196,6 +249,10 @@ def parse_press_release(text: str) -> tuple[date | None, list[dict[str, Any]]]:
     tranches, seen = [], set()
     for m in PRESS_TRANCHE.finditer(flat):
         if EQUITY_LINKED.search(m.group(4)):
+            continue
+        before, after = flat[max(0, m.start() - 80):m.start()], flat[m.end():m.end() + 60]
+        # Add-on offerings describe the notes already outstanding; those are not new supply.
+        if PREVIOUSLY_ISSUED.search(before) or re.search(r"Existing Notes", after):
             continue
         key = (m.group(1), m.group(3), m.group(5))
         if key in seen:
@@ -299,16 +356,59 @@ class EdgarClient:
         return self._get(filing.url)
 
 
+def _stored_filing(external_id: str, metadata: dict[str, Any]) -> Filing | None:
+    """Rebuild a Filing from a stored raw record (adsh:filename plus the stored URL and form)."""
+    url, form = metadata.get("url") or "", metadata.get("form")
+    match = re.match(r"(\d+-\d{2}-\d+):(.+)$", external_id)
+    cik = re.search(r"/edgar/data/(\d+)/", url)
+    if not match or not cik or not form or not metadata.get("file_date"):
+        return None
+    return Filing(form=form, adsh=match.group(1), cik=cik.group(1).zfill(10), filename=match.group(2),
+                  file_date=date.fromisoformat(metadata["file_date"]), issuer=metadata.get("issuer") or "")
+
+
 def discover(client: EdgarClient, start: date, end: date, *, max_documents: int = MAX_DOCUMENTS,
              known: set[str] | None = None, api_key: str | None = None,
-             model_opener: Callable[..., Any] = urlopen) -> tuple[list[Pricing], list[tuple[Filing, str]]]:
-    """Search, fetch, and parse filings. Returns pricings and (filing, html) for provenance."""
+             model_opener: Callable[..., Any] = urlopen,
+             stored: list[tuple[Filing, str]] | None = None) -> tuple[list[Pricing], list[tuple[Filing, str]]]:
+    """Search, fetch, and parse filings. Returns pricings and newly fetched (filing, html).
+
+    `stored` documents (already in raw_records) are re-parsed from their stored text
+    without any network request, so parser fixes reach filings read on earlier runs.
+    The model fallback is used only for newly fetched documents.
+    """
     known = known or set()
     pricings: list[Pricing] = []
     fetched: list[tuple[Filing, str]] = []
     model_calls = 0
     seen_deals: set[tuple] = set()
     errors: list[str] = []
+
+    def read(filing: Filing, html: str, *, allow_model: bool) -> None:
+        nonlocal model_calls
+        text = html_to_text(html)
+        if "FWP" in filing.form.upper():
+            trade, settle, tranches = parse_term_sheet(text)
+            method = "pattern"
+        else:
+            settle, tranches = parse_press_release(text)
+            trade, method = filing.file_date, "pattern"
+            if (not tranches and allow_model and api_key and model_calls < MAX_MODEL_DOCUMENTS
+                    and "pric" in text.lower()):
+                model_calls += 1
+                tranches, method = model_extract(text, api_key=api_key, opener=model_opener), "model, verified verbatim"
+        tranches = [t for t in tranches if t["principal_amount"] and t["coupon"] is not None]
+        if not tranches or sum(t["principal_amount"] for t in tranches) < MIN_DEAL_USD:
+            return
+        fingerprint = (trade, tuple(sorted((t["principal_amount"], t["coupon"]) for t in tranches)))
+        if fingerprint in seen_deals:          # co-registrants file the same terms twice
+            return
+        seen_deals.add(fingerprint)
+        pricings.append(Pricing(filing, trade or filing.file_date, settle, tranches, method,
+                                hashlib.sha256(html.encode()).hexdigest()))
+
+    for filing, html in sorted(stored or [], key=lambda item: (item[0].adsh, item[0].filename)):
+        read(filing, html, allow_model=False)
     for form, phrase in QUERIES:
         try:
             found = client.search(form, phrase, start, end)
@@ -324,25 +424,9 @@ def discover(client: EdgarClient, start: date, end: date, *, max_documents: int 
             except EdgarError as exc:
                 errors.append(f"{exc} ({filing.url})")
                 continue
+            known.add(key)
             fetched.append((filing, html))
-            text = html_to_text(html)
-            if form == "FWP":
-                trade, settle, tranches = parse_term_sheet(text)
-                method = "pattern"
-            else:
-                settle, tranches = parse_press_release(text)
-                trade, method = filing.file_date, "pattern"
-                if not tranches and api_key and model_calls < MAX_MODEL_DOCUMENTS and "pric" in text.lower():
-                    model_calls += 1
-                    tranches, method = model_extract(text, api_key=api_key, opener=model_opener), "model, verified verbatim"
-            tranches = [t for t in tranches if t["principal_amount"] and t["coupon"] is not None]
-            if not tranches or sum(t["principal_amount"] for t in tranches) < MIN_DEAL_USD:
-                continue
-            fingerprint = (trade, tuple(sorted((t["principal_amount"], t["coupon"]) for t in tranches)))
-            if fingerprint in seen_deals:          # co-registrants file the same terms twice
-                continue
-            seen_deals.add(fingerprint)
-            pricings.append(Pricing(filing, trade or filing.file_date, settle, tranches, method))
+            read(filing, html, allow_model=True)
     if errors and not fetched and len(errors) >= len(QUERIES):
         raise EdgarError("; ".join(errors))     # nothing worked: report it as a failed source
     discover.last_errors = errors               # type: ignore[attr-defined]
@@ -357,11 +441,17 @@ def ingest_edgar_pricings(*, database_path: str | Path = DEFAULT_DB_PATH, client
     start = max(start_date or end - timedelta(days=LOOKBACK_DAYS), end - timedelta(days=LOOKBACK_DAYS))
     initialize_database(database_path)
     with database(database_path) as conn:
-        known = {row[0] for row in conn.execute(
-            "SELECT r.external_record_id FROM raw_records r JOIN sources s ON s.id = r.source_id "
-            "WHERE s.identifier = ?", (SOURCE_IDENTIFIER,))}
+        records = conn.execute(
+            "SELECT r.external_record_id, r.payload, r.metadata_json FROM raw_records r "
+            "JOIN sources s ON s.id = r.source_id WHERE s.identifier = ?", (SOURCE_IDENTIFIER,)).fetchall()
+    known = {row[0] for row in records}
+    stored = []
+    for external_id, payload, metadata_json in records:
+        filing = _stored_filing(external_id, json.loads(metadata_json or "{}"))
+        if filing is not None:
+            stored.append((filing, payload if isinstance(payload, str) else bytes(payload).decode("utf-8", "replace")))
     pricings, fetched = discover(edgar, start, end, max_documents=max_documents, known=known,
-                                 api_key=os.getenv("ANTHROPIC_API_KEY") or None)
+                                 api_key=os.getenv("ANTHROPIC_API_KEY") or None, stored=stored)
     retrieved = edgar._clock()
     with database(database_path) as conn:
         source_id = register_source(conn, identifier=SOURCE_IDENTIFIER, name=SOURCE_NAME,
@@ -388,10 +478,10 @@ def ingest_edgar_pricings(*, database_path: str | Path = DEFAULT_DB_PATH, client
                 "settlement_date": pricing.settlement_date.isoformat() if pricing.settlement_date else None,
                 "issuance_type": "registered pricing term sheet (FWP)" if filing.form == "FWP" else "pricing press release (8-K)",
                 "source_native_fields": {"filing_url": filing.url, "form": filing.form, "extraction": pricing.method,
+                                         "parser_version": PARSER_VERSION,
                                          "maturity_year": tranche.get("maturity_year") or (
                                              tranche["maturity_date"].year if tranche["maturity_date"] else None),
-                                         "document_sha256": hashlib.sha256(
-                                             next(h for f, h in fetched if f is filing).encode()).hexdigest()},
+                                         "document_sha256": pricing.document_sha256},
             })
     warnings = list(getattr(discover, "last_errors", []))
     if not rows:

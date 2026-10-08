@@ -523,13 +523,19 @@ def build_research_report(
 
 def edgar_deals(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Rebuild deals from stored EDGAR tranche facts, in the ledger's deal shape."""
-    tranches: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    usable = []
     for row in rows:
         metadata = row.get("metadata") or {}
         native = metadata.get("source_native_fields") or {}
         fields = metadata.get("issuance_event")
-        if not isinstance(fields, dict) or not native.get("filing_url") or not metadata.get("deal_identifier"):
-            continue
+        if isinstance(fields, dict) and native.get("filing_url") and metadata.get("deal_identifier"):
+            usable.append((int(native.get("parser_version") or 0), int(row.get("revision") or 0), metadata, fields, native))
+    # Only tranches written by the newest parser count: every run re-parses all stored filings,
+    # so a tranche an older parser produced and the current one rejects has no current-version row.
+    newest = max((u[0] for u in usable), default=0)
+    tranches: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for _version, _revision, metadata, fields, native in sorted(
+            (u for u in usable if u[0] == newest), key=lambda u: u[1]):
         tranches[metadata["deal_identifier"]][metadata["source_record_id"]] = {**fields, "_native": native}
     deals = []
     for deal_id, items in tranches.items():

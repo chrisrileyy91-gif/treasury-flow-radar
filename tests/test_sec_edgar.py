@@ -147,3 +147,92 @@ def test_all_searches_failing_is_reported_as_failure(tmp_path):
     from treasury_flow_radar.sources.sec_edgar import EdgarError
     with pytest.raises(EdgarError, match="FWP search request failed with status 503"):
         ingest_edgar_pricings(database_path=tmp_path / "e.sqlite3", client=client, end_date=date(2026, 10, 7))
+
+
+# Layouts seen in real filings (values shortened): one label followed by every tranche's
+# value, settlement written after a T+n note, and a "UST" benchmark prefix or suffix.
+COLUMNAR = """<table>
+<tr><td>Trade Date:</td><td>September 22, 2026</td></tr>
+<tr><td>Expected Settlement Date**:</td><td>T + 10; October 6, 2026</td></tr>
+<tr><td>Principal Amount:</td><td>$1,500,000,000</td><td>$1,000,000,000</td><td>$1,400,000,000</td></tr>
+<tr><td>Coupon:</td><td>7.100%</td><td>7.250%</td><td>7.350%</td></tr>
+<tr><td>Benchmark Treasury:</td><td>UST 4.375% due August 31, 2031</td><td>UST 4.500% due August 31, 2033</td>
+<td>UST 4.625% due August 15, 2036</td></tr>
+<tr><td>Spread to Benchmark Treasury:</td><td>T + 228 bps</td><td>T + 237 bps</td><td>T + 240 bps</td></tr>
+</table>"""
+
+
+def test_columnar_term_sheet_with_t_plus_settlement_and_ust_prefix():
+    trade, settle, tranches = parse_term_sheet(html_to_text(COLUMNAR))
+    assert trade == date(2026, 9, 22) and settle == date(2026, 10, 6)
+    assert [t["principal_amount"] for t in tranches] == [1.5e9, 1.0e9, 1.4e9]
+    assert [t["coupon"] for t in tranches] == [7.1, 7.25, 7.35]
+    assert [t["benchmark_maturity"] for t in tranches] == [date(2031, 8, 31), date(2033, 8, 31), date(2036, 8, 15)]
+    assert [t["spread"] for t in tranches] == [228, 237, 240]
+
+
+@pytest.mark.parametrize(("line", "expected"), [
+    ("Settlement Date*: T + 2 (September 21, 2026)", date(2026, 9, 21)),
+    ("Settlement Date (T+4)**: September 25, 2026", date(2026, 9, 25)),
+    ("Settlement Date: October 5, 2026 (T+5)", date(2026, 10, 5)),
+])
+def test_settlement_date_formats(line, expected):
+    text = f"Trade Date: September 18, 2026\n{line}\nPrincipal Amount: $700,000,000\nCoupon: 6.000%\n" \
+           "Benchmark Treasury: 4.625% UST due August 15, 2036"
+    _, settle, tranches = parse_term_sheet(text)
+    assert settle == expected
+    assert tranches[0]["benchmark_maturity"] == date(2036, 8, 15)   # "UST" after the coupon also works
+
+
+def test_settlement_stays_unknown_when_only_t_plus_n_is_stated():
+    text = "Trade Date: October 5, 2026\nPrincipal Amount: $700,000,000\nCoupon: 5.500%\n" \
+           "The notes will settle on the second business day (T+2)."
+    assert parse_term_sheet(text)[1] is None         # no calendar date is computed or guessed
+
+
+def test_field_with_mismatched_value_count_stays_unknown():
+    text = "Principal Amount: $600,000,000 $400,000,000\nCoupon: 7.800%\nTrade Date: September 24, 2026"
+    tranches = parse_term_sheet(text)[2]
+    assert [t["coupon"] for t in tranches] == [None, None]     # one coupon cannot be assigned to two tranches
+
+
+def test_add_on_offering_counts_only_the_new_notes():
+    text = ("LandBridge priced an offering of $125 million aggregate principal amount of 6.250% Senior Notes due "
+            "2033 (the \"New Notes\"). The New Notes are additional notes under the indenture under which the "
+            "Company previously issued $500 million aggregate principal amount of 6.250% Senior Notes due 2033 "
+            "(the \"Existing Notes\"). The offering is expected to close on October 1, 2026.")
+    settle, tranches = parse_press_release(text)
+    assert [t["principal_amount"] for t in tranches] == [125e6]
+    assert settle == date(2026, 10, 1)
+
+
+def _row(deal: str, tranche: int, amount: float, version: int | None) -> dict:
+    native = {"filing_url": "https://www.sec.gov/Archives/edgar/data/1/x/y.htm", "form": "FWP"}
+    if version is not None:
+        native["parser_version"] = version
+    return {"revision": 1, "metadata": {
+        "deal_identifier": deal, "source_record_id": f"{deal}:{tranche}", "source_native_fields": native,
+        "issuance_event": {"issuer_name": "X", "principal_amount": amount, "coupon": 6.0,
+                           "pricing_date": "2026-09-22", "benchmark_maturity": "2031-08-31"}}}
+
+
+def test_only_tranches_from_the_newest_parser_count():
+    from treasury_flow_radar.analytics.research import edgar_deals
+    rows = [_row("A", 1, 1.5e9, None), _row("A", 2, 9.9e9, None),     # old parse: wrong second tranche
+            _row("A", 1, 1.5e9, 2),                                     # current parse of the same filing
+            _row("B", 1, 625e6, None)]                                  # current parser rejects B entirely
+    deals = edgar_deals(rows)
+    assert [(d["id"], d["size_usd"]) for d in deals] == [("edgar-A", 1.5e9)]
+
+
+def test_stored_filings_are_reparsed_without_refetching(tmp_path):
+    db = tmp_path / "edgar.sqlite3"
+    search = {"FWP": [_hit("0001-26-000001", "a_fwp.htm", "0000096021", "SYSCO CORP", "2026-09-23", "FWP")]}
+    calls: list[str] = []
+    client = EdgarClient(opener=_opener(search, {"a_fwp.htm": FIXTURE}, calls),
+                         clock=lambda: datetime(2026, 10, 7, tzinfo=UTC))
+    ingest_edgar_pricings(database_path=db, client=client, end_date=date(2026, 10, 7))
+    calls.clear()
+    again = ingest_edgar_pricings(database_path=db, client=client, end_date=date(2026, 10, 7))
+    assert again["documents"] == 0 and again["deals"] == 1 and again["inserted"] == 0
+    assert not [c for c in calls if "Archives" in c]
