@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
+from treasury_flow_radar.analytics.calibration import AUCTION_TYPE, calibrate_priors, event_type
 from treasury_flow_radar.analytics.candidates import deal_rate_risk
 from treasury_flow_radar.analytics.descriptive import EvidenceType
 
@@ -36,9 +37,11 @@ AUCTION_PRIOR = 0.5
 
 ASSUMPTIONS = [
     (
-    "Priors (how strongly each event type is expected to move Treasuries): FOMC decision, CPI, jobs report 1.0; "
-    "PCE, GDP, retail sales 0.6; PPI, JOLTS 0.5; weekly jobless claims 0.4; coupon auction 0.5; corporate deal "
-    "= 10-year-equivalent size / $20B, capped at 1."
+    "Priors for releases, Fed decisions and auctions are measured from stored history before the window: the share "
+    "of the 10-year's day-to-day variance on that event's days that ordinary days (no scheduled event) do not have, "
+    "clamped to 0..1 (see the table). A type with too few days keeps a stated fallback. Corporate deals cannot be "
+    "measured this way yet (too few dated deals), so their prior is a stated rule: 10-year-equivalent size / $20B, "
+    "capped at the strongest measured event type's prior so an untested rule cannot outrank tested ones by default."
     ),
     (
     "Fit: a deal's hedging window (launch to pricing) fits a long-end-led rise (1.0; even 0.5; short-led 0.25); "
@@ -94,8 +97,30 @@ def attribute_window(*, yields: Mapping[str, Mapping[date, float]],
     ten = yields.get("DGS10", {})
     sessions = sorted(ten)
     if len(sessions) <= window:
-        return {"status": "INSUFFICIENT DATA", "best": None, "candidates": [], "sessions": []}
+        return {"status": "INSUFFICIENT DATA", "best": None, "candidates": [], "sessions": [], "calibration": None}
     in_window = sessions[-window:]
+    session_set = set(sessions)
+    event_days: dict[date, set[str]] = {}
+    fallback: dict[str, float] = {AUCTION_TYPE: AUCTION_PRIOR}
+    for release in releases:
+        day = date.fromisoformat(str(release["date"]))
+        if day in session_set:
+            event_days.setdefault(day, set()).add(event_type(release))
+        fallback.setdefault(event_type(release), float(release.get("weight") or 0.5))
+    for auction in auctions:
+        day = date.fromisoformat(str(auction["auction_date"]))
+        if day in session_set:
+            event_days.setdefault(day, set()).add(AUCTION_TYPE)
+    all_changes = {s: (ten[s] - ten[sessions[i - 1]]) * 100 for i, s in enumerate(sessions) if i > 0}
+    calibration = calibrate_priors(all_changes, event_days, before=in_window[0], fallback=fallback)
+
+    measured = [v["prior"] for v in calibration["types"].values() if v.get("measured")]
+    deal_cap = min(1.0, max(measured)) if measured else 1.0
+    calibration["deal_prior_cap"] = deal_cap
+
+    def prior_for(kind: str) -> float:
+        value = (calibration["types"].get(kind) or {}).get("prior")
+        return fallback.get(kind, 0.5) if value is None else value
     change = {s: (ten[s] - ten[sessions[i - 1]]) * 100 for i, s in enumerate(sessions) if i > 0}
     record = {s: (decomposition_by_date.get(s.isoformat()) or {}).get("windows", {}).get("1") for s in in_window}
 
@@ -113,7 +138,9 @@ def attribute_window(*, yields: Mapping[str, Mapping[date, float]],
         key = f"deal:{deal['id']}"
         risk = deal_rate_risk(deal, ten.get(sessions[-1]))
         equivalent = None if risk is None else risk["ten_year_equivalent_usd"]
-        prior = UNKNOWN_SIZE_DEAL_PRIOR if equivalent is None else min(1.0, equivalent / FULL_SIZE_DEAL_USD)
+        # The deal rule is assumed, not measured, so it is capped at the strongest measured event type:
+        # an untested rule must not outrank tested ones by default.
+        prior = min(deal_cap, UNKNOWN_SIZE_DEAL_PRIOR if equivalent is None else equivalent / FULL_SIZE_DEAL_USD)
         meta[key] = {"type": "corporate_deal", "name": deal["name"], "date": deal["pricing_date"],
                      "prior": prior, "ten_year_equivalent_usd": equivalent}
         pricing = _first_session_on_or_after(sessions, date.fromisoformat(deal["pricing_date"]))
@@ -135,20 +162,22 @@ def attribute_window(*, yields: Mapping[str, Mapping[date, float]],
         years = int(term.split("-")[0]) if term.split("-")[0].isdigit() else None
         tenor_end = None if years is None else "short end" if years <= 5 else "long end" if years >= 10 else None
         key = f"auction:{day.isoformat()}:{term}"
+        auction_prior = prior_for(AUCTION_TYPE)
         meta[key] = {"type": "treasury_auction", "name": f"{term} {auction.get('security_type') or ''} auction".strip(),
-                     "date": day.isoformat(), "prior": AUCTION_PRIOR}
-        if index is not None:
-            activate(key, index, "auction", AUCTION_PRIOR, tenor_end=tenor_end)
-            activate(key, index - 1 if index > 0 else None, "auction", AUCTION_PRIOR, tenor_end=tenor_end)
+                     "date": day.isoformat(), "prior": auction_prior, "event_type": AUCTION_TYPE}
+        if index is not None and auction_prior > 0:
+            activate(key, index, "auction", auction_prior, tenor_end=tenor_end)
+            activate(key, index - 1 if index > 0 else None, "auction", auction_prior, tenor_end=tenor_end)
     for release in releases:
         day = date.fromisoformat(str(release["date"]))
         index = _first_session_on_or_after(sessions, day)
         if index is None or sessions[index] != day:
             continue                     # released on a non-session date; not attributed
         key = f"release:{release.get('short') or release.get('name')}:{day.isoformat()}"
-        prior = float(release.get("weight") or 0.5)
+        prior = prior_for(event_type(release))
         meta[key] = {"type": "macro_release", "name": release.get("short") or release.get("name"),
-                     "date": day.isoformat(), "prior": prior, "kind": release.get("kind")}
+                     "date": day.isoformat(), "prior": prior, "kind": release.get("kind"),
+                     "event_type": event_type(release)}
         activate(key, index, "release", prior, kind=release.get("kind"))
 
     scores: dict[str, float] = {}
@@ -194,4 +223,4 @@ def attribute_window(*, yields: Mapping[str, Mapping[date, float]],
             "total_abs_bps": total, "unexplained_bps": unexplained_total,
             "unexplained_share": unexplained_total / total if total else None,
             "best": best, "candidates": ranked, "sessions": session_rows,
-            "assumptions": ASSUMPTIONS, "evidence_type": EvidenceType.INFERENCE.value}
+            "assumptions": ASSUMPTIONS, "calibration": calibration, "evidence_type": EvidenceType.INFERENCE.value}

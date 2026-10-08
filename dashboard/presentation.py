@@ -173,8 +173,13 @@ def _verdict(attribution: Mapping[str, Any]) -> str | None:
     text = (f"Best potential reason: {best['name']}, about {share:.0%} of the window's 10-year movement "
             f"({best['attributed_bps']:.1f} of {total:.0f} bp). {strength} fits it.")
     runner = next((c for c in attribution.get("candidates", [])[1:] if c["attributed_bps"] > 0), None)
-    if runner:
+    if runner and runner["attributed_bps"] >= 0.8 * best["attributed_bps"]:
+        text += (f" Essentially tied with {runner['name']} ({runner['attributed_bps']:.1f} bp, about "
+                 f"{runner['share']:.0%}): the data cannot separate them.")
+    elif runner:
         text += f" Next: {runner['name']} (about {runner['share']:.0%})."
+    if best["type"] == "corporate_deal":
+        text += " The deal's weight is assumed, not measured; the releases' weights are measured."
     if unexplained >= 0.05:
         text += f" {unexplained:.0%} has no candidate."
     return text
@@ -216,6 +221,17 @@ PRICE_NOTE = ("Higher yields and lower bond prices are the same thing seen from 
               "itself show that investors sold: prices can reset on news with little trading.")
 
 
+def _pct(value: float) -> str:
+    return f"{value:.0%}".replace("-", "\u2212")
+
+
+def _calibration_rows(calibration: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Measured priors, strongest first; a CALCULATION over stored history."""
+    types = (calibration or {}).get("types") or {}
+    rows = [{"type": k, **v} for k, v in types.items()]
+    return sorted(rows, key=lambda r: (not r.get("measured"), -(r.get("prior") or 0), r["type"]))
+
+
 def _fit_reason(role: str, kind: str | None, fit: float) -> str:
     if fit <= 0:
         return "the move did not have this mechanism's direction or pattern, so it gets no credit"
@@ -238,6 +254,7 @@ def _why(attribution: Mapping[str, Any], limit: int = 2) -> list[dict[str, Any]]
     """Plain-language explanation of the top-ranked candidates: the score's arithmetic (CALCULATION),
     the general channel (MECHANISM), and what is not known (UNKNOWN)."""
     out = []
+    calibration = attribution.get("calibration") or {}
     total = attribution.get("total_abs_bps") or 0
     credited = [c for c in attribution.get("candidates") or [] if c["attributed_bps"] > 0][:limit]
     for rank, c in enumerate(credited):
@@ -250,20 +267,39 @@ def _why(attribution: Mapping[str, Any], limit: int = 2) -> list[dict[str, Any]]
             if d.get("short_change_bps") is not None and d.get("long_change_bps") is not None:
                 led = "" if d.get("led_by") in (None, "evenly") else f", so the {d['led_by']} led"
                 curve = f" (2-year {_bp(d['short_change_bps'])}, 30-year {_bp(d['long_change_bps'])}{led})"
-            share = ("It was the only fitting candidate that day, so it received all of it"
-                     if not d.get("competitors") else
-                     f"It shared the day with {d['competitors']} other candidate{'s' if d['competitors'] > 1 else ''}")
+            if d.get("competitors"):
+                n = d["competitors"]
+                share = f"It shared the day with {n} other candidate{'s' if n > 1 else ''} and received {d['attributed_bps']:.1f} bp."
+            else:
+                rest = abs(d["change_bps"]) - d["attributed_bps"]
+                share = (f"No other candidate fit that day; it received {d['attributed_bps']:.1f} bp"
+                         + (f" and the other {rest:.1f} bp is unexplained." if rest >= 0.05 else ", all of the move."))
             lines.append(f"{d['date']}: the 10-year moved {_bp(d['change_bps'])}{curve}. Weight = prior "
                          f"{d['prior']:.2g} × fit {d['fit']:.2g}: {_fit_reason(d['role'], c.get('kind'), d['fit'])}. "
-                         f"{share}: {d['attributed_bps']:.1f} bp.")
+                         f"{share}")
         if rank == 0:
             rank_text = (f"It ranks first because it was credited the most basis points ({c['attributed_bps']:.1f} of "
-                         f"{total:.0f} bp). The score rewards three things: how strongly this kind of event usually moves "
-                         f"Treasuries (the prior), whether the day's curve pattern matches its mechanism (the fit), "
-                         f"and how big the move was.")
+                         f"{total:.0f} bp). The score rewards three things: how much this kind of event has moved the "
+                         f"10-year in past data (the prior), whether the day's curve pattern matches its mechanism "
+                         f"(the fit), and how big the move was.")
         else:
             rank_text = f"It ranks second with {c['attributed_bps']:.1f} of {total:.0f} bp."
-        out.append({"name": c["name"], "rank_text": rank_text, "lines": lines,
+        measured = (calibration.get("types") or {}).get(c.get("event_type") or "")
+        if measured and measured.get("measured"):
+            history = (f"History: on {measured['days']} {c['name']} days ({measured['basis']}), the 10-year typically "
+                       f"moved {measured['event_rms_bps']:.1f} bp, against {measured['quiet_rms_bps']:.1f} bp on "
+                       f"ordinary days. That puts the share of such a day's move that comes from the event at about "
+                       f"{max(0.0, measured['estimate']):.0%} (90% range {_pct(measured['low'])} to "
+                       f"{_pct(measured['high'])}), which is its prior.")
+            if not measured["distinguishable"]:
+                history += " That range includes zero, so these days are not clearly different from ordinary days."
+        elif c["type"] == "corporate_deal":
+            history = (f"The deal's prior ({c.get('prior', 0):.2g}) is assumed, not measured: its size in 10-year terms "
+                       f"divided by $20B, capped at the strongest measured event ({calibration.get('deal_prior_cap', 1):.2g}). "
+                       f"There are not yet enough dated deals to measure how much deals move yields.")
+        else:
+            history = "Its prior is a stated fallback: too few past days to measure it."
+        out.append({"name": c["name"], "rank_text": rank_text, "lines": lines, "history": history,
                     "mechanism": WHY_MECHANISM.get(kind or "", ""), "unknown": WHY_UNKNOWN.get(c["type"], ""),
                     "price_note": PRICE_NOTE if rank == 0 else ""})
     return out
@@ -295,7 +331,9 @@ def _candidates(result: Mapping[str, Any], attribution: Mapping[str, Any]) -> di
             "items": items, "hidden_count": hidden, "bars": bars, "assumptions": list(attribution.get("assumptions") or []),
             "total_bps": attribution.get("total_abs_bps"),
             "unexplained_biggest_day": unexplained,
-            "verdict": verdict, "why": _why(attribution), "limitations": list(result.get("limitations") or []),
+            "verdict": verdict, "why": _why(attribution),
+            "calibration": attribution.get("calibration"), "calibration_rows": _calibration_rows(attribution.get("calibration")),
+            "limitations": list(result.get("limitations") or []),
             "type_labels": TYPE_LABELS}
 
 

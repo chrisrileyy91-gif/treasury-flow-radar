@@ -197,6 +197,39 @@ def _ordinal(value: float) -> str:
 MARKS = {"pass": ("✓", "Passed"), "fail": ("✗", "Failed"), "n/a": ("–", "Not applicable")}
 
 
+def _calibration_table(cand: dict[str, Any]) -> str:
+    cal = cand.get("calibration") or {}
+    rows = cand.get("calibration_rows") or []
+    if not rows:
+        return ""
+    body = []
+    for r in rows:
+        if r.get("measured"):
+            clear = "Yes" if r["distinguishable"] else "No"
+            body.append(f'<tr><td>{escape(r["type"])}</td><td class="r">{r["days"]}</td>'
+                        f'<td class="r">{r["event_rms_bps"]:.1f}</td><td class="r">{r["prior"]:.2f}</td>'
+                        f'<td class="r">{_pct(r["low"])} to {_pct(r["high"])}</td><td>{clear}</td></tr>')
+        else:
+            prior = "" if r.get("prior") is None else f'{r["prior"]:.2f}'
+            body.append(f'<tr><td>{escape(r["type"])}</td><td class="r">{r["days"]}</td><td>–</td>'
+                        f'<td class="r">{prior}</td><td colspan="2" class="wrap"><span class="unknown">Not measured</span>: '
+                        f'{escape(r["basis"])}</td></tr>')
+    body.append(f'<tr><td>Corporate deal</td><td>–</td><td>–</td><td class="r">≤ {cal.get("deal_prior_cap", 1):.2f}</td>'
+                f'<td colspan="2" class="wrap"><span class="unknown">Not measured</span>: size rule, capped at the strongest measured event</td></tr>')
+    span = ""
+    if cal.get("start") and cal.get("end"):
+        span = f"{_day(cal['start'])} to {_day(cal['end'])}, {cal['sessions']} sessions"
+    return f'''<details class="more"><summary>Where the weights come from (measured)</summary>
+<p class="small">Each event type's prior is measured from {escape(span)}, before the window being explained. Ordinary days
+(no scheduled event, {cal.get("quiet_days", 0)} of them) moved the 10-year about {float(next((r["quiet_rms_bps"] for r in rows if r.get("quiet_rms_bps")), 0)):.1f} bp on a typical day.
+The prior is the share of an event day's movement that ordinary days do not have. {_tag("Calculation")}</p>
+<div class="table-wrap"><table><thead><tr><th>Event</th><th class="r">Days</th><th class="r">Move, bp</th>
+<th class="r">Prior</th><th class="r">90% range</th><th>Clear?</th></tr></thead>
+<tbody>{"".join(body)}</tbody></table></div>
+<p class="small">"Move" is the typical (root-mean-square) daily change on those days. "Clear?" is Yes only when the whole 90% range is above zero, meaning those days were clearly more volatile than ordinary days. A negative estimate means those days were calmer than
+ordinary days; the prior is then 0. Two years is a short sample: most ranges are wide, and the numbers will update as history grows.</p></details>'''
+
+
 def _candidate_block(view: dict[str, Any]) -> str:
     cand = view.get("candidates") or {}
     window = cand.get("window")
@@ -227,6 +260,7 @@ def _candidate_block(view: dict[str, Any]) -> str:
         price = f'<p class="small">{escape(w["price_note"])}</p>' if w.get("price_note") else ""
         verdict += f'''<details class="why"{" open" if n == 0 else ""}><summary>Why {escape(w["name"])}?</summary>
 <p>{escape(w["rank_text"])} {_tag("Calculation")}</p><ul class="why-steps">{steps}</ul>
+<p>{escape(_friendly_dates(w["history"]))}</p>
 <p><strong>How it moves yields.</strong> {escape(w["mechanism"])} {_tag("Mechanism")}</p>
 <p><strong>What we don't know.</strong> <span class="unknown">Unknown</span>: {escape(w["unknown"])}</p>{price}</details>'''
     items = []
@@ -262,6 +296,7 @@ def _candidate_block(view: dict[str, Any]) -> str:
 <p class="small">Sessions {escape(span)}. Each candidate is credited with the part of each day's 10-year move that its mechanism fits; the rest is unexplained. Corporate deals are checked against the rate-lock pattern: yields rise before pricing, led by the long end, and the long end reverses after.</p>
 {verdict}
 {"".join(items)}
+{_calibration_table(cand)}
 <details class="more"><summary>The formula and its assumptions</summary><ul class="limits">{"".join(f"<li>{escape(x)}</li>" for x in cand.get("assumptions") or [])}<li>Each session's absolute 10-year move is split across the candidates active that day in proportion to prior × fit; whatever their weights do not cover is unexplained.</li></ul></details>
 <details class="more"><summary>What this ranking cannot tell you</summary><ul class="limits">{limits}<li>Hedge trades are not observable in public data, so a deal can only ever be a consistent candidate, never a confirmed cause.</li></ul></details>'''
 
@@ -648,6 +683,7 @@ th{font-weight:600;color:var(--ink-2);font-size:13px;border-bottom:1px solid var
 th:first-child,td:first-child{padding-left:0}
 th:last-child,td:last-child{padding-right:0}
 .l{text-align:left}.r{text-align:right}
+td.wrap{white-space:normal;min-width:12em}
 .cell-main{display:block;font-weight:600}
 .cell-main.src{font-weight:500;white-space:normal}
 .cell-sub{display:block;font-size:12px;color:var(--ink-3)}
