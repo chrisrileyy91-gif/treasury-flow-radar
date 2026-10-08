@@ -31,7 +31,7 @@ def test_flight_to_safety_and_rates_specific_days_are_read_from_signs():
     first, second = ctx["sessions"]
     assert first["cells"]["SP500"]["unusual"] and first["cells"]["SP500"]["change"] < -2.9
     assert first["read"].startswith("Consistent with a flight to safety")
-    assert second["read"].startswith("Stocks and credit were within their usual daily range")
+    assert second["read"].startswith("Stocks, credit and the dollar were within their usual daily range")
     assert set(ctx["missing"]) == {"BAMLC0A0CM", "DTWEXBGS"}
 
 

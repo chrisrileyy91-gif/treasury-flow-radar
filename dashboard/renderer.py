@@ -202,6 +202,8 @@ def _signed(value: float | None, unit: str) -> str:
     if value is None:
         return '<span class="unknown">pending</span>'
     text = f"{value:+.1f}%" if unit == "percent" else f"{value:+.0f}"
+    if text.lstrip("+-") in ("0.0%", "0"):
+        return text.lstrip("+-")
     return text.replace("-", "\u2212")
 
 
@@ -209,7 +211,7 @@ def _market_block(ctx: dict[str, Any]) -> str:
     if ctx.get("status") != "AVAILABLE":
         return ""
     series = ctx["series"]
-    head = [("Date", "l"), ("10-year, bp", "r")] + [(s["label"] + (", bp" if s["kind"] == "bp" else ""), "r") for s in series]
+    head = [("Date", "l"), ("10Y", "r")] + [(s["short"], "r") for s in series]
     head_html = "".join(f'<th scope="col" class="{a}">{escape(h)}</th>' for h, a in head)
     rows, reads = [], []
     for r in ctx["sessions"]:
@@ -227,7 +229,8 @@ def _market_block(ctx: dict[str, Any]) -> str:
     lag_note = (f' The dollar index is published weekly; it currently runs through {_day(lag[0]["latest"], year=False)}.'
                 if lag else "")
     return f'''<h2 class="sub-q" id="h-markets">What did other markets do?</h2>
-<p class="small">Same sessions. Stocks and the dollar in percent; credit spreads in basis points (wider = riskier). An asterisk
+<p class="small">Same sessions. 10Y = 10-year yield, bp. S&amp;P = S&amp;P 500, %. HY and IG = high-yield and investment-grade
+credit spreads, bp (wider = more worried). USD = Fed broad dollar index, %. An asterisk
 marks a move bigger than that market's usual day ({typical}).{lag_note} {_tag("Observation")}</p>
 <div class="table-wrap"><table><thead><tr>{head_html}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>
 <ul class="limits">{"".join(reads)}</ul>
@@ -477,8 +480,11 @@ def _missing(view: dict[str, Any]) -> str:
     have = [r["item"] for r in view["rate_lock_status"] if r["status"] == "AVAILABLE"]
     partial = [r["item"] for r in view["rate_lock_status"] if r["status"] == "PARTIALLY AVAILABLE"]
     lacking = [r["item"] for r in view["rate_lock_status"] if r["status"] == "UNAVAILABLE"]
-    if evidence["treasury_side_complete"]:
-        coverage = "The database currently holds the Treasury-market side of the hypothesis (yields, curve, dealer and CFTC positioning, auctions) but no production corporate issuance event feed."
+    if evidence["treasury_side_complete"] and not lacking:
+        coverage = ("Every input the rate-lock checks use is now stored. What stays invisible in public data is the "
+                    "hedging itself: the Treasury sales and swaps that issuers and their banks do are not reported.")
+    elif evidence["treasury_side_complete"]:
+        coverage = "The database currently holds the Treasury-market side of the hypothesis (yields, curve, dealer and CFTC positioning, auctions) but not every corporate or cross-market input listed above."
     else:
         coverage = "The database is also missing Treasury-market evidence listed above, so even the Treasury side of the hypothesis is incomplete."
     checklist = f'''<div class="checklist">

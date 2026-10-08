@@ -188,7 +188,8 @@ def _spread_check(ig: Mapping[date, float], start: date | None, end: date, launc
     typical = pstdev(history) * span ** 0.5
     return _check(name, PASS if change > typical else FAIL,
                   f"{_bp(change)} from {start.isoformat()} to {end.isoformat()}; a usual move over {span} "
-                  f"session{'s' if span > 1 else ''} is about ±{typical:.1f} bp")
+                  f"session{'s' if span > 1 else ''} is about ±{typical:.1f} bp. This is the whole investment-grade "
+                  f"market, so it reflects all new supply and news those days, not this deal alone")
 
 
 def par_modified_duration(coupon_percent: float, years: float) -> float:

@@ -8,8 +8,6 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from treasury_flow_radar.analytics.attribution import attribute_window
-from treasury_flow_radar.analytics.market_context import SERIES as CONTEXT_SERIES
-from treasury_flow_radar.analytics.market_context import market_context
 from treasury_flow_radar.analytics.candidates import evaluate_candidates, level_context
 from treasury_flow_radar.analytics.decomposition import decompose_moves
 from treasury_flow_radar.analytics.descriptive import (
@@ -23,6 +21,8 @@ from treasury_flow_radar.analytics.descriptive import (
 from treasury_flow_radar.analytics.event_study import MARKET_SERIES, YIELD_SERIES, event_study
 from treasury_flow_radar.analytics.evidence import evidence_from_rows
 from treasury_flow_radar.analytics.issuance import analyze_issuance_event
+from treasury_flow_radar.analytics.market_context import SERIES as CONTEXT_SERIES
+from treasury_flow_radar.analytics.market_context import market_context
 from treasury_flow_radar.analytics.temporal import align_observation
 from treasury_flow_radar.sources.fred_releases import (
     EXCLUDED_RELEASE_IDS,

@@ -21,10 +21,10 @@ from statistics import pstdev
 from typing import Any
 
 SERIES = {
-    "SP500": {"label": "S&P 500", "kind": "percent"},
-    "BAMLH0A0HYM2": {"label": "High-yield spread", "kind": "bp"},
-    "BAMLC0A0CM": {"label": "Investment-grade spread", "kind": "bp"},
-    "DTWEXBGS": {"label": "Broad dollar", "kind": "percent"},
+    "SP500": {"label": "S&P 500", "short": "S&P", "kind": "percent"},
+    "BAMLH0A0HYM2": {"label": "High-yield spread", "short": "HY", "kind": "bp"},
+    "BAMLC0A0CM": {"label": "Investment-grade spread", "short": "IG", "kind": "bp"},
+    "DTWEXBGS": {"label": "Broad dollar", "short": "USD", "kind": "percent"},
 }
 MIN_HISTORY = 30
 
@@ -85,6 +85,17 @@ def _read(ten: float | None, cells: Mapping[str, Mapping[str, Any]]) -> str | No
         return "Consistent with a flight to safety: yields fell while stocks fell and high-yield spreads widened more than usual."
     if ten > 0.5 and stocks_up and tighter:
         return "Consistent with risk appetite: yields rose while stocks rallied and high-yield spreads tightened more than usual."
-    if not stocks["unusual"] and not hy["unusual"]:
-        return "Stocks and credit were within their usual daily range; the move looks rates-specific."
-    return "Stocks or credit moved more than usual, but not in a clean flight-to-safety or risk-appetite pattern."
+    unusual = [_describe(sid, c["change"]) for sid, c in cells.items() if c.get("unusual")]
+    if not unusual:
+        return "Stocks, credit and the dollar were within their usual daily range; the move looks rates-specific."
+    return ("Unusual moves elsewhere: " + "; ".join(unusual)
+            + ". Not a clean flight-to-safety or risk-appetite pattern.")
+
+
+def _describe(sid: str, change: float) -> str:
+    if sid == "SP500":
+        return f"stocks {'rose' if change > 0 else 'fell'} {abs(change):.1f}%"
+    if sid == "DTWEXBGS":
+        return f"the dollar {'rose' if change > 0 else 'fell'} {abs(change):.1f}%"
+    name = "high-yield" if sid == "BAMLH0A0HYM2" else "investment-grade"
+    return f"{name} spreads {'widened' if change > 0 else 'tightened'} {abs(change):.0f} bp"
