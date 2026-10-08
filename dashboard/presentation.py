@@ -42,7 +42,7 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
     cftc = _cftc(list(report.get("cftc_positions", [])))
     auctions = list(report.get("treasury_auctions", []))
     corporate = report.get("corporate_issuance", {}) or {}
-    market = report.get("market_confirmation", {}) or {}
+    market = report.get("market_context", {}) or {}
     spread = _latest(report.get("spread", []))
     all_events = list(report.get("events", []))
     events = all_events[-event_limit:] if event_limit > 0 else []
@@ -68,7 +68,8 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
         "evidence": _evidence_status(latest_ten, spread, dealer, cftc, auctions, corporate, market),
         "rate_lock_status": _rate_lock_status(report.get("availability", {}) or {}, corporate, market),
         "corporate_status": str(corporate.get("status") or "Corporate issuance event feed not configured"),
-        "market_status": str(market.get("status") or "Market confirmation unavailable"),
+        "market_status": "AVAILABLE" if market.get("status") == "AVAILABLE" else "Market confirmation unavailable",
+        "market_context": market,
         "events": [_event_view(item) for item in reversed(events)],
         "event_limit": event_limit,
         "event_count": len(all_events),
@@ -498,9 +499,13 @@ def _evidence_status(dgs10: Mapping[str, Any] | None, spread: Mapping[str, Any] 
         missing.extend({"item": label, "reason": NO_FEED} for label in (
             "Corporate issuance event feed",
             "Corporate deal size, maturity/duration, pricing date, and settlement date"))
-    if market.get("status") != "AVAILABLE":
-        missing.extend({"item": label, "reason": NO_FEED} for label in (
-            "Treasury futures price confirmation", "HYG", "IWM", "DXY"))
+    names = {"SP500": "S&P 500", "BAMLH0A0HYM2": "High-yield spread", "BAMLC0A0CM": "Investment-grade spread",
+             "DTWEXBGS": "Broad dollar index"}
+    if market.get("status") == "AVAILABLE":
+        available.append("Cross-market context (stocks, credit spreads, dollar)")
+        missing.extend({"item": names.get(sid, sid), "reason": NO_OBSERVATIONS} for sid in market.get("missing") or [])
+    else:
+        missing.extend({"item": label, "reason": NO_FEED} for label in names.values())
     return {"available": available, "not_available": missing,
             "treasury_side_complete": all(present for _, present in treasury_side),
             "causality_limitation": ["Co-movement, positioning, and timing do not establish causality.",

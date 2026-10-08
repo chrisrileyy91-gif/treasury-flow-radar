@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
+from statistics import pstdev
 from typing import Any
 
 from treasury_flow_radar.analytics.descriptive import EvidenceType
@@ -72,7 +73,8 @@ def _session_index(sessions: list[date], day: date) -> int | None:
 def evaluate_candidates(*, yields: Mapping[str, Mapping[date, float]],
                         decomposition_by_date: Mapping[str, Any],
                         auctions: list[Mapping[str, Any]], releases: list[Mapping[str, Any]],
-                        deals: list[Mapping[str, Any]]) -> dict[str, Any]:
+                        deals: list[Mapping[str, Any]],
+                        market: Mapping[str, Mapping[date, float]] | None = None) -> dict[str, Any]:
     ten = yields.get("DGS10", {})
     sessions = sorted(ten)
     if len(sessions) <= WINDOW_SESSIONS:
@@ -84,7 +86,7 @@ def evaluate_candidates(*, yields: Mapping[str, Mapping[date, float]],
     biggest_day = max(in_window, key=lambda d: abs(daily.get(d) or 0)) if in_window else None
     candidates = []
     for deal in deals:
-        candidates.append(_deal(deal, yields, sessions))
+        candidates.append(_deal(deal, yields, sessions, market))
     for auction in auctions:
         day = date.fromisoformat(str(auction["auction_date"]))
         if start < day <= end:
@@ -118,7 +120,7 @@ def evaluate_candidates(*, yields: Mapping[str, Mapping[date, float]],
 
 
 def _deal(deal: Mapping[str, Any], yields: Mapping[str, Mapping[date, float]],
-          sessions: list[date]) -> dict[str, Any] | None:
+          sessions: list[date], market: Mapping[str, Mapping[date, float]] | None = None) -> dict[str, Any] | None:
     pricing = date.fromisoformat(deal["pricing_date"])
     p_index = _session_index(sessions, pricing)
     recent = p_index is not None and p_index >= len(sessions) - DEAL_LOOKBACK_SESSIONS
@@ -150,6 +152,7 @@ def _deal(deal: Mapping[str, Any], yields: Mapping[str, Mapping[date, float]],
             "Long-end reversal after pricing", PASS if reversal else FAIL,
             f"next session ({after.isoformat()}): 30-year {_bp(post_thirty)}, 2-year {_bp(post_two)}"
             + ("" if reversal else "; the decline was led by the short end" if post_thirty < 0 else "")))
+    checks.append(_spread_check((market or {}).get("BAMLC0A0CM") or {}, base, after or priced, launch))
     risk = deal_rate_risk(deal, ten.get(priced))
     equivalent = None if risk is None else risk["ten_year_equivalent_usd"]
     checks.append(_check(
@@ -163,6 +166,29 @@ def _deal(deal: Mapping[str, Any], yields: Mapping[str, Mapping[date, float]],
             "size_usd": deal.get("size_usd"), "ten_year_equivalent_usd": equivalent, "rate_risk": risk,
             "mechanism": "Dealers or issuers may hedge rate risk with Treasuries before pricing and unwind after.",
             "sources": deal.get("sources", []), "checks": checks}
+
+
+def _spread_check(ig: Mapping[date, float], start: date | None, end: date, launch: date) -> dict[str, Any]:
+    """Supply check: did investment-grade spreads widen around pricing by more than usual?
+
+    Change in the ICE BofA IG option-adjusted spread from the close before launch to the
+    session after pricing, against the typical change over that many sessions measured on
+    earlier history (daily standard deviation × √sessions)."""
+    name = "Investment-grade spreads widened around pricing"
+    if not ig or start is None:
+        return _check(name, NA, "investment-grade spread data not stored for these dates")
+    if start not in ig or end not in ig:
+        return _check(name, NA, f"spread not yet published for {start.isoformat() if start not in ig else end.isoformat()}")
+    days = sorted(ig)
+    span = sum(1 for d in days if start < d <= end)
+    history = [(ig[d] - ig[days[i - 1]]) * 100 for i, d in enumerate(days) if i and d < launch]
+    if span == 0 or len(history) < 30:
+        return _check(name, NA, "not enough spread history to judge a usual move")
+    change = (ig[end] - ig[start]) * 100
+    typical = pstdev(history) * span ** 0.5
+    return _check(name, PASS if change > typical else FAIL,
+                  f"{_bp(change)} from {start.isoformat()} to {end.isoformat()}; a usual move over {span} "
+                  f"session{'s' if span > 1 else ''} is about ±{typical:.1f} bp")
 
 
 def par_modified_duration(coupon_percent: float, years: float) -> float:

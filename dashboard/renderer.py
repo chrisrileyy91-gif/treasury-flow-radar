@@ -161,6 +161,7 @@ def _happening(view: dict[str, Any]) -> str:
 {_level(view.get("level"))}
 {lead}
 {_candidate_block(view)}
+{_market_block(view.get("market_context") or {})}
 {_channel(view["channel"])}
 <figure class="chart" data-chart="curve" aria-label="Treasury yield curve: latest versus 5 and 20 sessions earlier">
 <figcaption>Yield curve: latest versus 5 and 20 sessions earlier</figcaption>
@@ -195,6 +196,43 @@ def _ordinal(value: float) -> str:
 
 
 MARKS = {"pass": ("✓", "Passed"), "fail": ("✗", "Failed"), "n/a": ("–", "Not applicable")}
+
+
+def _signed(value: float | None, unit: str) -> str:
+    if value is None:
+        return '<span class="unknown">pending</span>'
+    text = f"{value:+.1f}%" if unit == "percent" else f"{value:+.0f}"
+    return text.replace("-", "\u2212")
+
+
+def _market_block(ctx: dict[str, Any]) -> str:
+    if ctx.get("status") != "AVAILABLE":
+        return ""
+    series = ctx["series"]
+    head = [("Date", "l"), ("10-year, bp", "r")] + [(s["label"] + (", bp" if s["kind"] == "bp" else ""), "r") for s in series]
+    head_html = "".join(f'<th scope="col" class="{a}">{escape(h)}</th>' for h, a in head)
+    rows, reads = [], []
+    for r in ctx["sessions"]:
+        cells = [f'<td class="l">{_day(r["date"], year=False)}</td>', f'<td class="r">{_signed(r["ten_year_bps"], "bp")}</td>']
+        for s in series:
+            c = r["cells"].get(s["id"]) or {}
+            text = _signed(c.get("change"), s["kind"])
+            cells.append(f'<td class="r">{"<strong>" + text + "*</strong>" if c.get("unusual") else text}</td>')
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+        if r.get("read"):
+            reads.append(f'<li><strong>{_day(r["date"], year=False)}</strong>: {escape(r["read"])}</li>')
+    typical = "; ".join(f'{escape(s["label"])} ±{s["typical"]:.1f}{"%" if s["kind"] == "percent" else " bp"}'
+                        for s in series if s.get("typical"))
+    lag = [s for s in series if s["id"] == "DTWEXBGS"]
+    lag_note = (f' The dollar index is published weekly; it currently runs through {_day(lag[0]["latest"], year=False)}.'
+                if lag else "")
+    return f'''<h2 class="sub-q" id="h-markets">What did other markets do?</h2>
+<p class="small">Same sessions. Stocks and the dollar in percent; credit spreads in basis points (wider = riskier). An asterisk
+marks a move bigger than that market's usual day ({typical}).{lag_note} {_tag("Observation")}</p>
+<div class="table-wrap"><table><thead><tr>{head_html}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>
+<ul class="limits">{"".join(reads)}</ul>
+<p class="small">A pattern here is consistent with a story (for example a flight to safety), not evidence of who traded or why.
+Source: FRED (S&amp;P Dow Jones Indices, ICE Data Indices, Federal Reserve H.10).</p>'''
 
 
 def _calibration_table(cand: dict[str, Any]) -> str:
@@ -428,11 +466,14 @@ def _missing(view: dict[str, Any]) -> str:
     market_items = [i for i in feed_items if i not in ("Corporate issuance event feed",
                     "Corporate deal size, maturity/duration, pricing date, and settlement date")]
     if market_items:
-        names = {"Treasury futures price confirmation": "Treasury futures prices (ZT, ZF, ZN, TN, UB, ZB)"}
         panels.append('<div class="void"><h3>Market confirmation</h3><ul>' + "".join(
-            f'<li>{escape(names.get(i, i))}: <strong>Unavailable</strong></li>' for i in market_items)
-            + '</ul><p>No production price feed is configured for these, so cross-market moves cannot be checked.</p>'
+            f'<li>{escape(i)}: <strong>Unavailable</strong></li>' for i in market_items)
+            + '</ul><p>These FRED series are not stored yet, so cross-market moves cannot be checked.</p>'
             + f'<p class="small">Status: {escape(view["market_status"])}.</p></div>')
+    panels.append('<div class="void"><h3>Not needed: Treasury futures prices</h3><p>Futures are priced off the same '
+                  'Treasuries whose official daily yields are already stored, so they would add little at a daily '
+                  'frequency. Their intraday prices and volume would add timing detail, but they are licensed exchange '
+                  'data. Futures positioning is covered by the CFTC panel.</p></div>')
     have = [r["item"] for r in view["rate_lock_status"] if r["status"] == "AVAILABLE"]
     partial = [r["item"] for r in view["rate_lock_status"] if r["status"] == "PARTIALLY AVAILABLE"]
     lacking = [r["item"] for r in view["rate_lock_status"] if r["status"] == "UNAVAILABLE"]
@@ -478,7 +519,7 @@ def _event_detail(event: dict[str, Any]) -> str:
 {_table(headers, rows, caption=caption)}
 <p class="note">10-year: {_bp(summary.get("pre_event_move_bps"))} from T−5 to T−1, {_bp(summary.get("event_day_move_bps"))} on T0, {_bp(summary.get("post_event_move_bps"))} from T0 to T+5. {_tag("Calculation")}</p>
 {_event_channel(event.get("channel"))}
-<p class="note">Nearby context: {escape("; ".join(context) or "no dealer or CFTC report on or before this date")}.{(" Auctions within 3 days: " + escape(auctions) + ".") if auctions else ""} Corporate issuance and market confirmation: unavailable.</p>
+<p class="note">Nearby context: {escape("; ".join(context) or "no dealer or CFTC report on or before this date")}.{(" Auctions within 3 days: " + escape(auctions) + ".") if auctions else ""} Cross-market context is shown for the latest sessions only.</p>
 </div>'''
 
 

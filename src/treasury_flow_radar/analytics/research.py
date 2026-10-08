@@ -8,6 +8,8 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from treasury_flow_radar.analytics.attribution import attribute_window
+from treasury_flow_radar.analytics.market_context import SERIES as CONTEXT_SERIES
+from treasury_flow_radar.analytics.market_context import market_context
 from treasury_flow_radar.analytics.candidates import evaluate_candidates, level_context
 from treasury_flow_radar.analytics.decomposition import decompose_moves
 from treasury_flow_radar.analytics.descriptive import (
@@ -100,6 +102,11 @@ def build_research_report(
     decomposition = decompose_moves(observations)
     yield_levels = {sid: {m.observation_time: m.yield_percent for m in metrics if m.yield_percent is not None}
                     for sid, metrics in yields.items()}
+    market_levels: dict[str, dict[date, float]] = {sid: {} for sid in CONTEXT_SERIES}
+    for r in source_rows:
+        sid = r.get("series_identifier")
+        if sid in CONTEXT_SERIES and r.get("value_numeric") is not None:
+            market_levels[sid][date.fromisoformat(str(r["observation_time"])[:10])] = float(r["value_numeric"])
     releases, calendar_notes = _release_calendar(source_rows)
     releases += list(fomc_decisions or [])
     curve_by_day = {m.observation_time: m for m in curves}
@@ -485,7 +492,10 @@ def build_research_report(
         "level": level_context(yield_levels.get("DGS10", {})),
         "candidates": evaluate_candidates(
             yields=yield_levels, decomposition_by_date=decomposition["by_date"],
-            auctions=auctions, releases=releases, deals=all_deals),
+            auctions=auctions, releases=releases, deals=all_deals, market=market_levels),
+        "market_context": market_context(
+            ten_year=yield_levels.get("DGS10", {}), market=market_levels,
+            window=sorted(yield_levels.get("DGS10", {}))[-5:]),
         "attribution": attribute_window(
             yields=yield_levels, decomposition_by_date=decomposition["by_date"],
             deals=all_deals, auctions=auctions, releases=releases),

@@ -160,7 +160,7 @@ def test_compact_dashboard_overview_and_audit_details_are_rendered():
     assert "yields rose at every maturity shown" in html
     assert "The largest move was the <span class=\"nw\">10-year</span> (+18 bp)" in html
     assert "Production corporate issuance feed unavailable." in html
-    assert "HYG: <strong>Unavailable</strong>" in html
+    assert "High-yield spread: <strong>Unavailable</strong>" in html
     assert html.count('<details class="event">') == len(report["events"]) > 1
     assert "id=research-data" not in html
 
@@ -212,7 +212,7 @@ def test_partial_report_lists_only_the_evidence_that_exists():
     assert "Primary dealer positioning: <strong>UNAVAILABLE — NO OBSERVATIONS IN DATABASE" in stored
     assert "Treasury auction data" in stored
     assert "10Y yield movement" not in stored and "10Y–2Y curve movement" not in stored
-    assert "HYG: <strong>Unavailable</strong>" in html
+    assert "High-yield spread: <strong>Unavailable</strong>" in html
 
 
 def test_status_text_is_rendered_as_markup_not_escaped_text():

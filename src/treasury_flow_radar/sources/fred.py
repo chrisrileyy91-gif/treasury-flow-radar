@@ -62,6 +62,30 @@ SUPPORTED_SERIES = {
         "description": "Board of Governors three-factor (Kim-Wright) model estimate, percent. "
                        "A model output, not a market quote; published with a lag of about a week.",
     },
+    # Market context (cross-market confirmation). Not Treasury yields: each carries its own unit.
+    "BAMLC0A0CM": {
+        "name": "ICE BofA US Corporate Index Option-Adjusted Spread",
+        "description": "Investment-grade corporate spread over Treasuries, percent. FRED keeps only about the "
+                       "last 3 years under ICE licensing terms.",
+        "instrument_type": "credit_spread", "unit": "percent", "observation_units": "Percent",
+    },
+    "BAMLH0A0HYM2": {
+        "name": "ICE BofA US High Yield Index Option-Adjusted Spread",
+        "description": "High-yield corporate spread over Treasuries, percent. FRED keeps only about the last 3 "
+                       "years under ICE licensing terms.",
+        "instrument_type": "credit_spread", "unit": "percent", "observation_units": "Percent",
+    },
+    "SP500": {
+        "name": "S&P 500",
+        "description": "S&P 500 index level at the close (price index, no dividends). FRED keeps 10 years.",
+        "instrument_type": "equity_index", "unit": "index", "observation_units": "Index",
+    },
+    "DTWEXBGS": {
+        "name": "Nominal Broad U.S. Dollar Index",
+        "description": "Federal Reserve trade-weighted broad dollar index (Jan 2006 = 100), from the H.10 "
+                       "release; published weekly, so the latest days arrive a few days late.",
+        "instrument_type": "fx_index", "unit": "index", "observation_units": "Index Jan 2006=100",
+    },
 }
 SUPPORTED_LIST = ", ".join(SUPPORTED_SERIES)
 SOURCE_IDENTIFIER = "FRED"
@@ -354,12 +378,12 @@ def ingest_fred(
                 identifier=response.series_id,
                 name=definition["name"],
                 description=definition["description"],
-                instrument_type="treasury_yield",
+                instrument_type=definition.get("instrument_type", "treasury_yield"),
                 frequency="daily",
-                default_unit=RATE_UNIT,
+                default_unit=definition.get("unit", RATE_UNIT),
                 metadata={
                     "provider": "FRED",
-                    "observation_units": "Percent",
+                    "observation_units": definition.get("observation_units", "Percent"),
                     "source_series_url": (
                         f"https://fred.stlouisfed.org/series/{response.series_id}"
                     ),
@@ -430,7 +454,7 @@ def ingest_fred(
                     publication_time=None,
                     retrieval_time=response.retrieval_time,
                     value_numeric=observation.value,
-                    unit=RATE_UNIT,
+                    unit=_series_definition(response.series_id).get("unit", RATE_UNIT),
                     raw_value=observation.raw_value,
                     raw_record_id=raw_record_id,
                     metadata=observation_metadata,
