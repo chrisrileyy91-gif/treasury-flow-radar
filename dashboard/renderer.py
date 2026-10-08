@@ -222,6 +222,13 @@ def _candidate_block(view: dict[str, Any]) -> str:
         verdict += (f'<div class="bars" role="img" aria-label="Share of the window\'s 10-year movement by candidate">{rows}</div>'
                     f'<p class="small">Share of the 10-year\'s total movement ({float(cand.get("total_bps") or 0):.0f} bp of '
                     f'session-by-session moves, {escape(span)}) assigned to each candidate by the formula below.</p>')
+    for n, w in enumerate(cand.get("why") or []):
+        steps = "".join(f"<li>{escape(_friendly_dates(x))}</li>" for x in w["lines"])
+        price = f'<p class="small">{escape(w["price_note"])}</p>' if w.get("price_note") else ""
+        verdict += f'''<details class="why"{" open" if n == 0 else ""}><summary>Why {escape(w["name"])}?</summary>
+<p>{escape(w["rank_text"])} {_tag("Calculation")}</p><ul class="why-steps">{steps}</ul>
+<p><strong>How it moves yields.</strong> {escape(w["mechanism"])} {_tag("Mechanism")}</p>
+<p><strong>What we don't know.</strong> <span class="unknown">Unknown</span>: {escape(w["unknown"])}</p>{price}</details>'''
     items = []
     labels = cand.get("type_labels") or {}
     for c in cand.get("items") or []:
@@ -602,6 +609,11 @@ h2.sub-q{font-size:20px;margin-top:22px}
 .level-tag{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.02em;border:1.5px solid var(--ink);border-radius:3px;padding:0 6px;margin:0 4px;vertical-align:6px}
 .level-context{display:block;font-size:14px;color:var(--ink-2);margin-top:2px}
 .verdict{font-family:var(--serif);font-size:19px;line-height:1.45;margin:4px 0 12px;max-width:38em}
+details.why{border-left:3px solid var(--line);padding:2px 0 2px 12px;margin:10px 0 14px;max-width:42em;font-size:15px;line-height:1.5}
+details.why summary{cursor:pointer;font-weight:600;padding:4px 0}
+details.why p{margin:6px 0}
+.why-steps{margin:4px 0 8px;padding-left:18px;font-variant-numeric:tabular-nums}
+.why-steps li{margin:3px 0}
 details.cand{border:1px solid var(--rule);border-radius:4px;padding:0 12px;margin:0 0 10px;max-width:42em}
 details.cand summary{cursor:pointer;display:flex;justify-content:space-between;gap:12px;padding:10px 0;font-weight:600}
 .bars{margin:6px 0 4px;max-width:42em}

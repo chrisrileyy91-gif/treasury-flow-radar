@@ -180,6 +180,95 @@ def _verdict(attribution: Mapping[str, Any]) -> str | None:
     return text
 
 
+# MECHANISM text: how each kind of event is generally understood to move Treasury yields.
+# Textbook channels, written conditionally; none is evidence about a particular day.
+WHY_MECHANISM = {
+    "labor": ("The jobs report is the most-watched read on how strong the economy and wages are. The Fed sets "
+              "short-term interest rates, so news that changes what investors expect the Fed to do moves the 2-year "
+              "yield most. A stronger report than expected (more hiring, faster wage growth) suggests rates stay higher "
+              "for longer: short-term yields rise, longer yields follow, and bond prices fall. A weaker report does the "
+              "reverse."),
+    "inflation": ("Inflation reports change two things at once: how much inflation investors expect (the breakeven) "
+                  "and how high they expect the Fed to keep rates. A hotter reading raises both, so yields rise and "
+                  "bond prices fall, because a fixed coupon buys less when prices rise faster. A cooler reading does "
+                  "the reverse."),
+    "growth": ("Growth reports such as GDP and retail sales show whether the economy is running hot or cooling. "
+               "Stronger growth points to higher rates ahead, so yields tend to rise; weaker growth points the "
+               "other way."),
+    "policy": ("The Federal Reserve's rate-setting committee sets the policy rate directly. Its decision, statement and "
+               "projections reset what investors expect for the path of rates, which moves short-term yields first."),
+    "treasury_auction": ("The Treasury sells new notes and bonds on a schedule, and buyers have to absorb that new "
+                         "supply. Dealers and investors often let yields drift up into the auction to make room for it, "
+                         "and that pressure usually fades afterwards."),
+    "corporate_deal": ("When a company sells a large amount of fixed-rate bonds, it or its banks often lock in the "
+                       "Treasury rate between announcement and pricing by selling Treasuries or using swaps. That "
+                       "hedging can push yields up, mostly at the long maturities being hedged. After pricing the "
+                       "hedges are lifted, which can push those yields back down."),
+}
+WHY_UNKNOWN = {
+    "macro_release": ("This page does not store the report's numbers or what forecasters expected, so it cannot say "
+                      "whether the report was strong or weak. The direction is read from the market's reaction, not "
+                      "from the data, which makes the story consistent rather than proven."),
+    "treasury_auction": "Only the auction's timing is used here; how much demand it drew is not part of the score.",
+    "corporate_deal": "Hedge trades are not reported publicly, so a deal can be consistent with hedging but never confirmed.",
+}
+PRICE_NOTE = ("Higher yields and lower bond prices are the same thing seen from two sides. A price drop does not by "
+              "itself show that investors sold: prices can reset on news with little trading.")
+
+
+def _fit_reason(role: str, kind: str | None, fit: float) -> str:
+    if fit <= 0:
+        return "the move did not have this mechanism's direction or pattern, so it gets no credit"
+    if role in ("hedge_build", "unwind"):
+        step = "rise" if role == "hedge_build" else "fall"
+        return {1.0: f"a long-end-led {step} is the hedging pattern",
+                0.5: f"an even {step} partly fits the hedging pattern"}.get(fit, f"a short-end-led {step} only weakly fits hedging")
+    if role == "auction":
+        return ("a rise led by the end of the curve being auctioned fits supply pressure" if fit == 1.0
+                else "a rise fits supply pressure, but the other end of the curve led")
+    if kind == "inflation":
+        return ("breakevens carried at least a third of the move or the short end led, as inflation news usually does"
+                if fit == 1.0 else "the move did not run mainly through inflation expectations or the short end")
+    return {1.0: "a move led by the short end is what news about the Fed's path usually produces",
+            0.75: "the move was spread evenly along the curve, which partly fits"}.get(
+                fit, "the long end led, which only partly fits news about the Fed's path")
+
+
+def _why(attribution: Mapping[str, Any], limit: int = 2) -> list[dict[str, Any]]:
+    """Plain-language explanation of the top-ranked candidates: the score's arithmetic (CALCULATION),
+    the general channel (MECHANISM), and what is not known (UNKNOWN)."""
+    out = []
+    total = attribution.get("total_abs_bps") or 0
+    credited = [c for c in attribution.get("candidates") or [] if c["attributed_bps"] > 0][:limit]
+    for rank, c in enumerate(credited):
+        kind = c.get("kind") if c["type"] == "macro_release" else c["type"]
+        lines = []
+        for d in c.get("sessions") or []:
+            if d["attributed_bps"] <= 0:
+                continue
+            curve = ""
+            if d.get("short_change_bps") is not None and d.get("long_change_bps") is not None:
+                led = "" if d.get("led_by") in (None, "evenly") else f", so the {d['led_by']} led"
+                curve = f" (2-year {_bp(d['short_change_bps'])}, 30-year {_bp(d['long_change_bps'])}{led})"
+            share = ("It was the only fitting candidate that day, so it received all of it"
+                     if not d.get("competitors") else
+                     f"It shared the day with {d['competitors']} other candidate{'s' if d['competitors'] > 1 else ''}")
+            lines.append(f"{d['date']}: the 10-year moved {_bp(d['change_bps'])}{curve}. Weight = prior "
+                         f"{d['prior']:.2g} × fit {d['fit']:.2g}: {_fit_reason(d['role'], c.get('kind'), d['fit'])}. "
+                         f"{share}: {d['attributed_bps']:.1f} bp.")
+        if rank == 0:
+            rank_text = (f"It ranks first because it was credited the most basis points ({c['attributed_bps']:.1f} of "
+                         f"{total:.0f} bp). The score rewards three things: how strongly this kind of event usually moves "
+                         f"Treasuries (the prior), whether the day's curve pattern matches its mechanism (the fit), "
+                         f"and how big the move was.")
+        else:
+            rank_text = f"It ranks second with {c['attributed_bps']:.1f} of {total:.0f} bp."
+        out.append({"name": c["name"], "rank_text": rank_text, "lines": lines,
+                    "mechanism": WHY_MECHANISM.get(kind or "", ""), "unknown": WHY_UNKNOWN.get(c["type"], ""),
+                    "price_note": PRICE_NOTE if rank == 0 else ""})
+    return out
+
+
 def _candidates(result: Mapping[str, Any], attribution: Mapping[str, Any]) -> dict[str, Any]:
     """Ranked candidates, their checks, and the formula's verdict (an INFERENCE)."""
     shares = {(c["name"], c["date"]): c for c in attribution.get("candidates", [])}
@@ -206,7 +295,7 @@ def _candidates(result: Mapping[str, Any], attribution: Mapping[str, Any]) -> di
             "items": items, "hidden_count": hidden, "bars": bars, "assumptions": list(attribution.get("assumptions") or []),
             "total_bps": attribution.get("total_abs_bps"),
             "unexplained_biggest_day": unexplained,
-            "verdict": verdict, "limitations": list(result.get("limitations") or []),
+            "verdict": verdict, "why": _why(attribution), "limitations": list(result.get("limitations") or []),
             "type_labels": TYPE_LABELS}
 
 

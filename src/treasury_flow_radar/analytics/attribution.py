@@ -148,7 +148,7 @@ def attribute_window(*, yields: Mapping[str, Mapping[date, float]],
         key = f"release:{release.get('short') or release.get('name')}:{day.isoformat()}"
         prior = float(release.get("weight") or 0.5)
         meta[key] = {"type": "macro_release", "name": release.get("short") or release.get("name"),
-                     "date": day.isoformat(), "prior": prior}
+                     "date": day.isoformat(), "prior": prior, "kind": release.get("kind")}
         activate(key, index, "release", prior, kind=release.get("kind"))
 
     scores: dict[str, float] = {}
@@ -167,13 +167,17 @@ def attribute_window(*, yields: Mapping[str, Mapping[date, float]],
             fit = _fit(item["role"], item["kind"], item["tenor_end"], record[s], moved)
             weights.append((item, fit, item["prior"] * fit))
         weight_sum = sum(w for _, _, w in weights)
+        curve = (record[s] or {}).get("curve") or {}
         shares = []
         for item, fit, weight in weights:
             bps = size * weight / max(1.0, weight_sum) if weight > 0 else 0.0
             scores[item["key"]] = scores.get(item["key"], 0.0) + bps
             details.setdefault(item["key"], []).append(
                 {"date": s.isoformat(), "role": item["role"], "fit": fit, "prior": item["prior"],
-                 "change_bps": moved, "attributed_bps": bps})
+                 "change_bps": moved, "attributed_bps": bps, "led_by": curve.get("led_by"),
+                 "short_change_bps": curve.get("short_change_bps"), "long_change_bps": curve.get("long_change_bps"),
+                 "breakeven_bps": (record[s] or {}).get("breakeven_bps"),
+                 "competitors": sum(1 for other, _, w in weights if w > 0 and other is not item)})
             shares.append({"key": item["key"], "attributed_bps": bps})
         leftover = size * max(0.0, 1.0 - weight_sum)
         unexplained_total += leftover
