@@ -40,6 +40,10 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
     curve = _curve(yields)
     dealer = _dealer(list(report.get("dealer_positions", [])))
     cftc = _cftc(list(report.get("cftc_positions", [])))
+    moves = dict(report.get("positioning_moves") or {})
+    labels = dict(CFTC_CONTRACTS)
+    moves["rows"] = [{**r, "contract": labels.get(r["series"], r["contract"])} for r in moves.get("rows") or []]
+    moves["flagged"] = [r for r in moves["rows"] if r["unusual"]]
     auctions = list(report.get("treasury_auctions", []))
     corporate = report.get("corporate_issuance", {}) or {}
     market = report.get("market_context", {}) or {}
@@ -65,6 +69,7 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
             "spread_bps": spread.get("spread_bps"), "daily_change_bps": spread.get("daily_change_bps"),
             "date": spread.get("observation_date")},
         "dealer": dealer,
+        "positioning_moves": moves,
         "cftc": cftc,
         "auctions": [_auction(item) for item in reversed(auctions[-AUCTION_ROWS:])],
         "evidence": _evidence_status(latest_ten, spread, dealer, cftc, auctions, corporate, market),

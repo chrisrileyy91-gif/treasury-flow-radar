@@ -416,6 +416,24 @@ def _dealers(view: dict[str, Any]) -> str:
 </section>'''
 
 
+def _moves(moves: dict[str, Any]) -> str:
+    rows = moves.get("rows") or []
+    if not rows:
+        return ""
+    flagged = moves.get("flagged") or []
+    if not flagged:
+        return (f'<p class="note">No unusual dealer move this week: every contract\'s weekly change was within '
+                f'{moves["threshold_sd"]:.0f} standard deviations of its history. {_tag("Calculation")}</p>')
+    items = []
+    for r in flagged:
+        rank = ("the largest weekly change" if r["larger_weeks"] == 0 else
+                f"larger than all but {r['larger_weeks']} weekly change{'s' if r['larger_weeks'] > 1 else ''}")
+        items.append(f'<li><strong>{escape(r["contract"])}</strong>: {rank} in {r["weeks"]} weeks of history '
+                     f'(about {abs(r["z"]):.1f}× a typical week). {escape(r["read"] or "")}</li>')
+    return f'''<div class="flag-box"><h3>Unusual dealer moves this week</h3><ul class="limits">{"".join(items)}</ul>
+<p class="small">Flagged when a weekly change is at least {moves["threshold_sd"]:.0f} standard deviations of that contract's past weekly changes. Each flag is checked against two ordinary explanations from the same report: undoing the prior week, and taking the other side of asset managers. {_tag("Calculation")} {_tag("Inference")}</p></div>'''
+
+
 def _futures(view: dict[str, Any]) -> str:
     cftc = view["cftc"]
     short = {"dealer": "Dealers", "asset_manager": "Asset mgrs", "leveraged_fund": "Lev. funds"}
@@ -435,7 +453,9 @@ def _futures(view: dict[str, Any]) -> str:
     date_line = f" Report date {_day(cftc['date'])}." if cftc else ""
     return f'''<section id="futures" aria-labelledby="h-futures">
 <h2 id="h-futures">Futures positioning</h2>
-<p class="lead-sm">Net futures contracts (long minus short) by trader group, with the change from the prior week.{date_line} {_tag("Fact")} {_tag("Calculation")}</p>
+<p class="lead-sm">Net futures contracts by trader group.{date_line} {_tag("Fact")} {_tag("Calculation")}</p>
+<p class="small">In each cell the large number is the group's net position (contracts long minus short; a minus sign means net short). The small "wk" number underneath is how much that net position changed from the prior week. Contract counts are not comparable across rows: a 2-year contract carries far less rate risk than a Bond contract.</p>
+{_moves(view.get("positioning_moves") or {})}
 {_table(headers, rows, caption="Net contracts, with weekly change underneath. Asset mgrs = asset managers; Lev. funds = leveraged funds. Spreading positions are kept separate and not included in net.")}
 {_cftc_details(cftc)}
 <p class="note">These are positioning observations, not predictions. Dealers are often net short futures while holding cash Treasuries, and asset managers' long futures commonly reflect duration exposure. A group being long or short does not by itself say where yields will go.</p>
@@ -710,6 +730,8 @@ h2.sub-q{font-size:20px;margin-top:22px}
 .xtake-actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 6px}
 .xtake-actions button{font:inherit;font-size:14px;padding:5px 12px;border:1px solid var(--rule);border-radius:4px;background:transparent;color:var(--ink);cursor:pointer}
 .xtake-actions a{font-size:14px}
+.flag-box{border:1px solid var(--rule);border-left:3px solid var(--line);border-radius:4px;padding:8px 12px;margin:8px 0 14px;max-width:42em}
+.flag-box h3{margin:4px 0 6px;font-size:16px}
 details.why{border-left:3px solid var(--line);padding:2px 0 2px 12px;margin:10px 0 14px;max-width:42em;font-size:15px;line-height:1.5}
 details.why summary{cursor:pointer;font-weight:600;padding:4px 0}
 details.why p{margin:6px 0}

@@ -23,6 +23,7 @@ from treasury_flow_radar.analytics.evidence import evidence_from_rows
 from treasury_flow_radar.analytics.issuance import analyze_issuance_event
 from treasury_flow_radar.analytics.market_context import SERIES as CONTEXT_SERIES
 from treasury_flow_radar.analytics.market_context import market_context
+from treasury_flow_radar.analytics.positioning_moves import unusual_dealer_moves
 from treasury_flow_radar.analytics.temporal import align_observation
 from treasury_flow_radar.sources.fred_releases import (
     EXCLUDED_RELEASE_IDS,
@@ -184,6 +185,7 @@ def build_research_report(
     grouped_cftc: dict[tuple[str, date], dict[str, Any]] = {}
     for metric in cftc_metrics:
         grouped_cftc.setdefault((metric.series_id, metric.observation_time), {})[metric.participant] = metric
+    positioning_flags = unusual_dealer_moves(cftc_metrics)
     cftc_summaries = []
     cftc_grouped: dict[tuple[str, str], list[Any]] = defaultdict(list)
     for metric in cftc_metrics:
@@ -504,6 +506,7 @@ def build_research_report(
         "edgar_deal_count": len(all_deals) - len(deals or []),
         "dealer_positions": dealer_summaries,
         "cftc_positions": cftc_summaries,
+        "positioning_moves": positioning_flags,
         "treasury_auctions": auctions,
         "event_study_windows": ["T-5 through T+5", "T-3 through T+3", "T-1 through T+1"],
         "market_confirmation": market_summary,
