@@ -162,6 +162,7 @@ def _happening(view: dict[str, Any]) -> str:
 {lead}
 {_candidate_block(view)}
 {_market_block(view.get("market_context") or {})}
+{_x_block(view.get("x_take"))}
 {_channel(view["channel"])}
 <figure class="chart" data-chart="curve" aria-label="Treasury yield curve: latest versus 5 and 20 sessions earlier">
 <figcaption>Yield curve: latest versus 5 and 20 sessions earlier</figcaption>
@@ -196,6 +197,20 @@ def _ordinal(value: float) -> str:
 
 
 MARKS = {"pass": ("✓", "Passed"), "fail": ("✗", "Failed"), "n/a": ("–", "Not applicable")}
+
+
+def _x_block(take: dict[str, Any] | None) -> str:
+    if not take:
+        return ""
+    from urllib.parse import quote
+    link = "https://x.com/intent/post?text=" + quote(take["text"], safe="")
+    return f'''<h2 class="sub-q" id="h-xtake">X take</h2>
+<blockquote class="xtake" id="xtake-text">{escape(take["text"])}</blockquote>
+<p class="xtake-actions"><button type="button" onclick="navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('xtake-text').textContent).then(()=>{{this.textContent='Copied'}})">Copy</button>
+<a href="{escape(link)}" target="_blank" rel="noopener">Post on X</a>
+<span class="small">{take["length"]} of {take["limit"]} characters</span></p>
+<p class="small">Written automatically from the numbers on this page, every run. Every figure is the page's own; the driver is the
+formula's best fit (an inference), never a confirmed cause. Nothing here is a trading signal. {_tag("Inference")}</p>'''
 
 
 def _signed(value: float | None, unit: str) -> str:
@@ -691,6 +706,10 @@ h2.sub-q{font-size:20px;margin-top:22px}
 .level-tag{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.02em;border:1.5px solid var(--ink);border-radius:3px;padding:0 6px;margin:0 4px;vertical-align:6px}
 .level-context{display:block;font-size:14px;color:var(--ink-2);margin-top:2px}
 .verdict{font-family:var(--serif);font-size:19px;line-height:1.45;margin:4px 0 12px;max-width:38em}
+.xtake{margin:6px 0 8px;padding:12px 14px;border:1px solid var(--rule);border-radius:6px;font-size:16px;line-height:1.45;max-width:36em}
+.xtake-actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 6px}
+.xtake-actions button{font:inherit;font-size:14px;padding:5px 12px;border:1px solid var(--rule);border-radius:4px;background:transparent;color:var(--ink);cursor:pointer}
+.xtake-actions a{font-size:14px}
 details.why{border-left:3px solid var(--line);padding:2px 0 2px 12px;margin:10px 0 14px;max-width:42em;font-size:15px;line-height:1.5}
 details.why summary{cursor:pointer;font-weight:600;padding:4px 0}
 details.why p{margin:6px 0}

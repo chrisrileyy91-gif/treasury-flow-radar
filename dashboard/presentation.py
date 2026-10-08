@@ -57,6 +57,8 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
         "channel": _channel(report.get("move_decomposition") or {}),
         "level": report.get("level"),
         "candidates": _candidates(report.get("candidates") or {}, report.get("attribution") or {}),
+        "x_take": x_take(report.get("level"), (report.get("move_decomposition") or {}).get("latest") or {},
+                         report.get("attribution") or {}),
         "curated_deal_count": report.get("curated_deal_count", 0),
         "ten_year_history": _ten_year_history(ten, all_events),
         "spread": None if spread is None else {
@@ -231,6 +233,74 @@ def _calibration_rows(calibration: Mapping[str, Any] | None) -> list[dict[str, A
     types = (calibration or {}).get("types") or {}
     rows = [{"type": k, **v} for k, v in types.items()]
     return sorted(rows, key=lambda r: (not r.get("measured"), -(r.get("prior") or 0), r["type"]))
+
+
+PAGE_URL = "https://chrisrileyy91-gif.github.io/treasury-flow-radar/"
+X_LIMIT = 280
+X_URL_LENGTH = 23          # X counts any link as 23 characters
+
+
+def _short_name(candidate: Mapping[str, Any]) -> str:
+    name = str(candidate.get("name") or "")
+    if candidate.get("type") == "corporate_deal" and " financing" in name:
+        return name.split(" financing")[0] + "'s bond deal"
+    if candidate.get("type") == "corporate_deal" and name.endswith(" notes"):
+        return name[:-6].title() + " bond deal"
+    return name if name[:2].isupper() else name[:1].lower() + name[1:]     # "Jobs report" -> "jobs report"; CPI stays
+
+
+def _md(day: str) -> str:
+    d = date.fromisoformat(day[:10])
+    return f"{d.strftime('%b')} {d.day}"
+
+
+def _x_length(text: str) -> int:
+    return len(text.replace(PAGE_URL, "x" * X_URL_LENGTH))
+
+
+def x_take(level: Mapping[str, Any] | None, latest: Mapping[str, Any],
+           attribution: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A post of at most 280 characters built only from numbers on this page (INFERENCE where it
+    names a candidate). Lower-priority pieces are dropped until it fits; nothing is invented."""
+    if not level:
+        return None
+    pct = round(level["percentile"])
+    years = round(level["sessions"] / 250)
+    where = f"highest close in {years} yrs" if level["highest_in_history"] else f"above {pct}% of closes in {years} yrs"
+    # (priority, text): lower priority numbers are dropped first when the post is too long.
+    pieces: list[tuple[int, str]] = [(9, f"10Y Treasury {float(level['percent']):.2f}% ({_md(level['date'])}), {where}.")]
+    five = (latest.get("windows") or {}).get("5") or {}
+    total = attribution.get("total_abs_bps")
+    if five.get("nominal_bps") is not None:
+        move = f"5 days: {_bp(five['nominal_bps'])} net"
+        if total:
+            move += f" on {total:.0f} bp of back-and-forth"
+        pieces.append((8, move + "."))
+        if five.get("real_bps") is not None and five.get("breakeven_bps") is not None:
+            pieces.append((2, f"Real yield {_bp(five['real_bps'])}, inflation expectations {_bp(five['breakeven_bps'])}."))
+    best = attribution.get("best")
+    credited = [c for c in attribution.get("candidates") or [] if c["attributed_bps"] > 0]
+    if best:
+        runner = credited[1] if len(credited) > 1 else None
+        if runner and runner["attributed_bps"] >= 0.8 * best["attributed_bps"]:
+            tie = (f"Top fits: {_short_name(best)} & {_short_name(runner)}, ~{round(100 * best['share'])}% "
+                   f"each, too close to call.")
+            pieces.append((7, tie))
+        else:
+            pieces.append((7, f"Top fit: {_short_name(best)}, ~{round(100 * best['share'])}% of the movement."))
+    if attribution.get("unexplained_share") is not None:
+        pieces.append((6, f"{round(100 * attribution['unexplained_share'])}% unexplained by the calendar."))
+    pieces.append((5, "Fit, not proof."))
+    pieces.append((3, PAGE_URL))
+
+    def render(items: list[tuple[int, str]]) -> str:
+        return " ".join(t for _, t in items).replace(" bp", "bp").replace("±0bp", "0")
+
+    text = render(pieces)
+    while _x_length(text) > X_LIMIT and len(pieces) > 1:
+        pieces.remove(min(pieces, key=lambda item: item[0]))
+        text = render(pieces)
+    return {"text": text, "length": _x_length(text), "limit": X_LIMIT}
 
 
 def _fit_reason(role: str, kind: str | None, fit: float) -> str:
