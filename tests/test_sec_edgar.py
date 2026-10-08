@@ -114,3 +114,36 @@ def test_curated_deal_wins_over_matching_discovery():
     found = [{"id": "e1", "pricing_date": "2026-09-30", "size_usd": 41.0e9},
              {"id": "e2", "pricing_date": "2026-09-30", "size_usd": 3.0e9}]
     assert [d["id"] for d in merge_deals(curated, found)] == ["c", "e2"]
+
+
+def test_one_failing_search_is_retried_then_isolated(tmp_path):
+    from urllib.error import HTTPError
+    attempts = {"8-K": 0}
+
+    def open_(request, timeout):
+        url = request.full_url
+        if "search-index" in url and "forms=8-K" in url:
+            attempts["8-K"] += 1
+            raise HTTPError(url, 500, "Server Error", {}, None)
+        if "search-index" in url:
+            hit = _hit("0001-26-000001", "a_fwp.htm", "0000096021", "SYSCO CORP", "2026-09-23", "FWP")
+            return _Resp(json.dumps({"hits": {"total": {"value": 1}, "hits": [hit]}}))
+        return _Resp(FIXTURE)
+
+    client = EdgarClient(opener=open_, clock=lambda: datetime(2026, 10, 7, tzinfo=UTC), sleep=lambda s: None)
+    result = ingest_edgar_pricings(database_path=tmp_path / "e.sqlite3", client=client, end_date=date(2026, 10, 7))
+    assert attempts["8-K"] == 3                     # retried twice on a server error
+    assert result["deals"] == 1                     # the FWP search still produced its deal
+    assert result["warnings"] and "8-K search request failed with status 500" in result["warnings"][0]
+
+
+def test_all_searches_failing_is_reported_as_failure(tmp_path):
+    from urllib.error import HTTPError
+
+    def open_(request, timeout):
+        raise HTTPError(request.full_url, 503, "Unavailable", {}, None)
+
+    client = EdgarClient(opener=open_, clock=lambda: datetime(2026, 10, 7, tzinfo=UTC), sleep=lambda s: None)
+    from treasury_flow_radar.sources.sec_edgar import EdgarError
+    with pytest.raises(EdgarError, match="FWP search request failed with status 503"):
+        ingest_edgar_pricings(database_path=tmp_path / "e.sqlite3", client=client, end_date=date(2026, 10, 7))

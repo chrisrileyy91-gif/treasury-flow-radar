@@ -207,7 +207,11 @@ def run_ingestion(
             results.append(SourceResult(
                 source=key,
                 status="SUCCESS",
-                message="Adapter completed; observations retain source-native units and provenance.",
+                message="Adapter completed; observations retain source-native units and provenance."
+                + "".join(f" Warning: {_safe_error(RuntimeError(w))}" for w in (
+                    result.get("warnings", []) if isinstance(result, Mapping) else []))
+                + (f" Documents read: {result['documents']}; deals: {result['deals']}."
+                   if isinstance(result, Mapping) and "deals" in result else ""),
                 inserted=inserted,
                 unchanged=unchanged,
                 missing=missing,

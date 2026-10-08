@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -58,7 +59,7 @@ MIN_DEAL_USD = 500e6
 MODEL = "claude-haiku-4-5-20251001"
 QUERIES = (
     ("FWP", '"Spread to Benchmark Treasury"'),
-    ("8-K", '"aggregate principal amount" "priced" "notes due"'),
+    ("8-K", '"announces pricing" "senior notes"'),
 )
 MONTH_DATE = r"([A-Z][a-z]+\.? \d{1,2}, \d{4})"
 
@@ -248,27 +249,38 @@ def model_extract(text: str, *, api_key: str, opener: Callable[..., Any] = urlop
 
 class EdgarClient:
     def __init__(self, *, user_agent: str | None = None, opener: Callable[..., Any] = urlopen,
-                 clock: Callable[[], datetime] | None = None) -> None:
+                 clock: Callable[[], datetime] | None = None,
+                 sleep: Callable[[float], None] | None = None) -> None:
         self.user_agent = user_agent or os.getenv("SEC_USER_AGENT") or DEFAULT_USER_AGENT
         self._opener = opener
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._sleep = sleep or time.sleep
 
-    def _get(self, url: str) -> str:
+    def _get(self, url: str, *, label: str = "document", attempts: int = 3) -> str:
+        """GET with a short retry on server errors (EDGAR search returns intermittent 5xx)."""
         request = Request(url, headers={"User-Agent": self.user_agent, "Accept-Encoding": "identity"})
-        try:
-            with self._opener(request, timeout=30) as response:
-                return response.read().decode("utf-8", errors="replace")
-        except HTTPError as exc:
-            raise EdgarError(f"EDGAR request failed with status {exc.code}") from None
-        except (URLError, OSError) as exc:
-            raise EdgarError(f"EDGAR network request failed: {exc}") from None
+        for attempt in range(1, attempts + 1):
+            try:
+                with self._opener(request, timeout=30) as response:
+                    return response.read().decode("utf-8", errors="replace")
+            except HTTPError as exc:
+                if exc.code >= 500 and attempt < attempts:
+                    self._sleep(2 * attempt)
+                    continue
+                raise EdgarError(f"EDGAR {label} request failed with status {exc.code}") from None
+            except (URLError, OSError) as exc:
+                if attempt < attempts:
+                    self._sleep(2 * attempt)
+                    continue
+                raise EdgarError(f"EDGAR {label} network request failed: {exc}") from None
+        raise EdgarError(f"EDGAR {label} request failed")
 
     def search(self, form: str, phrase: str, start: date, end: date) -> list[Filing]:
         filings, offset = [], 0
         while True:
             query = urlencode({"q": phrase, "forms": form, "dateRange": "custom", "startdt": start.isoformat(),
                                "enddt": end.isoformat(), "from": offset})
-            document = json.loads(self._get(f"{SEARCH_URL}?{query}"))
+            document = json.loads(self._get(f"{SEARCH_URL}?{query}", label=f"{form} search"))
             hits = (document.get("hits") or {}).get("hits") or []
             for hit in hits:
                 source = hit.get("_source") or {}
@@ -296,12 +308,22 @@ def discover(client: EdgarClient, start: date, end: date, *, max_documents: int 
     fetched: list[tuple[Filing, str]] = []
     model_calls = 0
     seen_deals: set[tuple] = set()
+    errors: list[str] = []
     for form, phrase in QUERIES:
-        for filing in client.search(form, phrase, start, end):
+        try:
+            found = client.search(form, phrase, start, end)
+        except EdgarError as exc:          # one failing search must not block the other
+            errors.append(str(exc))
+            continue
+        for filing in found:
             key = f"{filing.adsh}:{filing.filename}"
             if key in known or len(fetched) >= max_documents:
                 continue
-            html = client.document(filing)
+            try:
+                html = client.document(filing)
+            except EdgarError as exc:
+                errors.append(f"{exc} ({filing.url})")
+                continue
             fetched.append((filing, html))
             text = html_to_text(html)
             if form == "FWP":
@@ -321,6 +343,9 @@ def discover(client: EdgarClient, start: date, end: date, *, max_documents: int 
                 continue
             seen_deals.add(fingerprint)
             pricings.append(Pricing(filing, trade or filing.file_date, settle, tranches, method))
+    if errors and not fetched and len(errors) >= len(QUERIES):
+        raise EdgarError("; ".join(errors))     # nothing worked: report it as a failed source
+    discover.last_errors = errors               # type: ignore[attr-defined]
     return pricings, fetched
 
 
@@ -368,10 +393,12 @@ def ingest_edgar_pricings(*, database_path: str | Path = DEFAULT_DB_PATH, client
                                          "document_sha256": hashlib.sha256(
                                              next(h for f, h in fetched if f is filing).encode()).hexdigest()},
             })
+    warnings = list(getattr(discover, "last_errors", []))
     if not rows:
-        return {"inserted": 0, "unchanged": 0, "missing": 0, "documents": len(fetched), "deals": 0}
+        return {"inserted": 0, "unchanged": 0, "missing": 0, "documents": len(fetched), "deals": 0,
+                "warnings": warnings}
     page = {"data": rows, "meta": {"total-count": len(rows), "total-pages": 1}}
     result = ingest_corporate_issuance_pages(
         [page], database_path=str(database_path), source_identifier=SOURCE_IDENTIFIER, source_name=SOURCE_NAME,
         source_url=SOURCE_URL, production_source_configured=True, retrieved_at=retrieved)
-    return {**result, "documents": len(fetched), "deals": len(pricings)}
+    return {**result, "documents": len(fetched), "deals": len(pricings), "warnings": warnings}
