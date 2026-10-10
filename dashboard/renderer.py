@@ -548,6 +548,8 @@ def _basis(view: dict[str, Any]) -> str:
               f'{_yes_no(state.get("vol_elevated"), "yes", "no")}</li></ul>')
     rules = state.get("rules") or {}
     method = basis.get("method") or {}
+    history_note = ("" if agg and agg.get("history_weeks", 0) >= 260 else
+                    " Backfilling CFTC history (the TFF report starts in 2006) widens the comparison.")
     box = "flag-box" if state.get("flag") else "void"
     return f'''<section id="basis" aria-labelledby="h-basis">
 <h2 id="h-basis">Basis-trade setup</h2>
@@ -570,7 +572,8 @@ def _basis(view: dict[str, Any]) -> str:
 <li>These thresholds are display rules, not calibrated probabilities.</li>
 <li>10-year equivalents weight each contract by an estimated DV01: cheapest-to-deliver proxied by the shortest note in the CME deliverable basket, priced as a par bond off the stored constant-maturity curve, divided by its 6% conversion factor. Expect errors of roughly 10–20% per contract versus vendor figures. Per-contract rows use raw contracts and do not depend on this estimate.</li>
 <li>{_text(method.get("alignment", ""))}.</li><li>{_text(method.get("limits", ""))}</li>
-<li>A percentile only means something against the history behind it. If that history is short or covers an unusual period, a low rank can still be a large position in absolute terms. Backfilling CFTC history (the TFF report starts in 2006) widens the comparison.</li></ul></details>
+<li>A percentile only means something against the history behind it. If that history is short or covers an unusual period, a low rank can still be a large position in absolute terms.{history_note}</li>
+<li>The 10-year-equivalent total is computed only for weeks in which all five contracts reported, so its history starts when the Ultra 10-year contract began trading (2016). Per-contract ranks for the other four contracts reach back further.</li></ul></details>
 <p class="source">Sources: CFTC Traders in Financial Futures (futures only); FRED SOFR, SOFR99 (NY Fed) and IORB (Board of Governors); FRED DGS2/5/7/10/30; CME Group contract specifications.</p>
 </section>'''
 
