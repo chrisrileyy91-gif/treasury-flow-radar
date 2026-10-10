@@ -19,6 +19,8 @@ from treasury_flow_radar.analytics.descriptive import EvidenceType
 
 MINUS = "−"
 SMALL_PERCENTILE = 33.0   # below this, "smaller than in most of the stored history"
+HEAVY_PERCENTILE = 60.0   # at or above this (and below crowded), "larger than in most weeks"
+NEAR_LINE_POINTS = 5.0    # within this many percentile points of the crowded line, say so
 
 EQUITY_MECHANISM = (
     "On its own, this setup says nothing about where stocks go. It matters for equities mainly if it "
@@ -85,6 +87,10 @@ def _positioning(agg: Mapping[str, Any] | None) -> dict[str, str] | None:
                      f"so there is no aggregate short to unwind{week}.", EvidenceType.CALCULATION)
     if pct >= CROWDED_PERCENTILE:
         where = "among the largest in the stored history"
+    elif pct >= HEAVY_PERCENTILE:
+        where = ("larger than in most of the stored history, just under the crowded line"
+                 if CROWDED_PERCENTILE - pct <= NEAR_LINE_POINTS else
+                 "larger than in most of the stored history")
     elif pct < SMALL_PERCENTILE:
         where = "smaller than in most of the stored history"
     else:
@@ -175,8 +181,14 @@ def synthesize(basis: Mapping[str, Any] | None) -> dict[str, Any]:
         stress = ("The position is not large, so funding or volatility stress has less to force out. "
                   "Nothing here points to forced selling yet.")
     else:
-        tone, headline = "quiet", "Treasury plumbing is quiet."
-        stress = "Nothing here points to forced selling."
+        heavy = ((agg or {}).get("short_percentile") or 0) >= HEAVY_PERCENTILE
+        if heavy:
+            tone, headline = "quiet", "Treasury plumbing is quiet, but the trade is large."
+            stress = ("The position is larger than in most stored weeks, but calm funding and ordinary "
+                      "volatility mean nothing is forcing it to unwind.")
+        else:
+            tone, headline = "quiet", "Treasury plumbing is quiet."
+            stress = "Nothing here points to forced selling."
 
     return {
         "tone": tone,
