@@ -156,3 +156,70 @@ def test_report_and_page_include_the_section():
     page = render_report(report)
     assert 'id="basis"' in page and "Basis-trade setup" in page and "10-year-note equivalents" in page
     assert "not the MOVE index" in page or "MOVE" in page
+
+
+# ------------------------------------------------------------------ synthesis
+
+def _with_funding(rows: list[dict], sofr: float, days: int = 150) -> list[dict]:
+    start = date(2026, 1, 2)
+    for i in range(days):
+        day = start + timedelta(days=i)
+        rows += [_daily("SOFR", day, sofr), _daily("IORB", day, 4.40), _daily("SOFR99", day, 4.50)]
+    return rows
+
+
+def _with_vol(rows: list[dict], sessions: int = 200) -> list[dict]:
+    start = date(2025, 6, 2)
+    rows = [r for r in rows if r["series_identifier"] != "DGS10"]
+    # Wide daily swings early, narrow ones in the last 30 sessions: current vol ranks low.
+    return rows + [_daily("DGS10", start + timedelta(days=i),
+                          4.0 + ((0.10 if i < sessions - 30 else 0.01) if i % 2 else 0.0))
+                   for i in range(sessions)]
+
+
+def test_value_at_percentile_inverts_percentile_rank():
+    from treasury_flow_radar.analytics.basis_crowding import value_at_percentile
+    history = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    threshold = value_at_percentile(history, 80)
+    assert threshold == 8 and percentile_rank(history, threshold) == 80.0
+    assert value_at_percentile([], 80) is None
+
+
+def test_quiet_synthesis_when_small_calm_and_ordinary():
+    from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
+    rows = _with_vol(_with_funding(_history(60, 90_000.0), 4.38))
+    syn = synthesize(basis_setup(rows))
+    assert syn["headline"] == "Treasury plumbing is quiet."
+    assert "smaller than in most of the stored history" in syn["lines"][0]["text"]
+    assert "calm" in syn["lines"][1]["text"]
+    assert syn["fed"]["text"].startswith("There is no sign of the funding pressure")
+    assert syn["equities"]["evidence_type"] == "MECHANISM"
+    assert any("SOFR moving above IORB" in w for w in syn["watch"])
+    assert any("growing past" in w for w in syn["watch"])
+
+
+def test_crowded_and_tight_synthesis_names_streak_and_mechanism():
+    from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
+    rows = _with_funding(_history(60, 500_000.0), 4.43)
+    syn = synthesize(basis_setup(rows))
+    assert syn["headline"] in {"The setup for a forced unwind is building.", "Treasury plumbing is under strain."}
+    assert "above it for the last 150 sessions" in syn["lines"][1]["text"]
+    assert syn["fed"]["evidence_type"] == "MECHANISM" and "not QE in the 2020 sense" in syn["fed"]["text"]
+    assert not any("growing past" in w for w in syn["watch"])
+
+
+def test_missing_funding_does_not_claim_calm():
+    from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
+    syn = synthesize(basis_setup(_history(60, 90_000.0)))
+    assert syn["tone"] == "partial"
+    assert "not measured yet" in syn["fed"]["text"]
+    assert not any("forced selling." == line["text"][-15:] for line in syn["lines"][:-1])
+
+
+def test_synthesis_renders_near_end_of_page():
+    from dashboard.renderer import render_report
+    from treasury_flow_radar.analytics.research import build_research_report
+    rows = _with_funding(_history(60, 90_000.0), 4.38)
+    page = render_report(build_research_report(rows, start_date=date(2025, 1, 1), end_date=date(2026, 12, 31)))
+    assert page.index('id="synthesis"') > page.index('id="basis"')
+    assert "What it means for stocks" in page and "Does this point to Fed buying?" in page
