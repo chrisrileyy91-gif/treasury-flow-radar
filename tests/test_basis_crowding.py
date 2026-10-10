@@ -223,3 +223,25 @@ def test_synthesis_renders_near_end_of_page():
     page = render_report(build_research_report(rows, start_date=date(2025, 1, 1), end_date=date(2026, 12, 31)))
     assert page.index('id="synthesis"') > page.index('id="basis"')
     assert "What it means for stocks" in page and "Does this point to Fed buying?" in page
+
+
+def test_dashboard_report_ranks_basis_on_full_history_but_windows_other_sections(tmp_path):
+    from dashboard import reporting
+    rows = _history(60, 500_000.0)   # 2025-01-07 onward
+    old = date(2015, 1, 6)
+    for i in range(200):             # ~4 years of much larger shorts, long before the window
+        day = old + timedelta(weeks=i)
+        for series in CONTRACTS:
+            rows += _cftc_rows(series, day, 0.0, 2_000_000.0, 4_000_000.0)
+        for sid, tenor in (("DGS2", 2.0), ("DGS5", 5.0), ("DGS7", 7.0), ("DGS10", 10.0), ("DGS30", 30.0)):
+            rows.append(_daily(sid, day, CURVE[tenor]))
+    original = reporting.load_observations_read_only
+    reporting.load_observations_read_only = lambda _path: [dict(r) for r in rows]
+    try:
+        report = reporting.load_dashboard_report(tmp_path / "unused.sqlite3")
+    finally:
+        reporting.load_observations_read_only = original
+    agg = report["basis_setup"]["crowding"]["aggregate"]
+    assert agg["history_weeks"] == 260 and agg["history_start"] == "2015-01-06"
+    assert agg["short_percentile"] < 50           # today's short is small next to the old ones
+    assert report["scope"]["start_date"] >= "2024-01-01"   # other sections keep the recent window

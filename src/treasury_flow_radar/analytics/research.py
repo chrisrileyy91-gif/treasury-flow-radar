@@ -81,11 +81,16 @@ def build_research_report(
     auction_window_days: int = 3,
     deals: list[dict[str, Any]] | None = None,
     fomc_decisions: list[dict[str, Any]] | None = None,
+    history_rows: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-ready report from normalized observation rows.
 
     Input rows are expected to include source/series identifiers and provenance
     columns returned by :func:`load_observations_read_only`.
+
+    ``history_rows``, when supplied, feeds only the basis-trade setup read, which ranks
+    positioning, funding, and volatility against the longest stored history. Every other
+    section uses ``rows``. When omitted, the basis read uses ``rows`` too.
     """
     if start_date > end_date:
         raise ValueError("start_date must not be after end_date")
@@ -469,7 +474,7 @@ def build_research_report(
         has_value = row.get("value_numeric") is not None or row.get("value_text") is not None
         if observed and has_value and observed > str(entry["observation_date"] or ""):
             entry["observation_date"] = observed
-    basis = basis_setup(source_rows)
+    basis = basis_setup(source_rows if history_rows is None else [dict(r) for r in history_rows])
     return {
         "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
