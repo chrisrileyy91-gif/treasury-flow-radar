@@ -24,6 +24,7 @@ from treasury_flow_radar.analytics.evidence import evidence_from_rows
 from treasury_flow_radar.analytics.issuance import analyze_issuance_event
 from treasury_flow_radar.analytics.market_context import SERIES as CONTEXT_SERIES
 from treasury_flow_radar.analytics.market_context import market_context
+from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
 from treasury_flow_radar.analytics.positioning_moves import unusual_dealer_moves
 from treasury_flow_radar.analytics.temporal import align_observation
 from treasury_flow_radar.sources.fred_releases import (
@@ -511,6 +512,7 @@ def build_research_report(
         "cftc_positions": cftc_summaries,
         "positioning_moves": positioning_flags,
         "basis_setup": basis,
+        "plumbing_synthesis": synthesize(basis),
         "treasury_auctions": auctions,
         "event_study_windows": ["T-5 through T+5", "T-3 through T+3", "T-1 through T+1"],
         "market_confirmation": market_summary,

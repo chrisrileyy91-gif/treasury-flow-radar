@@ -100,6 +100,15 @@ def percentile_rank(history: Iterable[float], value: float) -> float | None:
     return 100.0 * sum(1 for v in values if v <= value) / len(values)
 
 
+def value_at_percentile(history: Iterable[float], percentile: float) -> float | None:
+    """Smallest stored value whose ``percentile_rank`` reaches ``percentile``."""
+    values = sorted(v for v in history if v is not None)
+    if not values:
+        return None
+    index = max(0, math.ceil(percentile / 100.0 * len(values)) - 1)
+    return values[index]
+
+
 def interpolate_yield(curve: Mapping[float, float], years: float) -> float | None:
     """Linear interpolation on the supplied tenor curve; flat beyond its ends. None if empty."""
     points = sorted((t, y) for t, y in curve.items() if y is not None)
@@ -262,6 +271,9 @@ def _crowding(observations: list[Observation], curve_levels: Mapping[str, Mappin
                                  if enough and latest["share_of_open_interest_percent"] is not None
                                  and len(shares) >= MIN_HISTORY_WEEKS else None),
             "record_short": -latest["net_10y_equivalents"] >= max(shorts),
+            "peak_short_10y_equivalents": max(shorts),
+            "crowded_threshold_10y_equivalents": (value_at_percentile(shorts, CROWDED_PERCENTILE)
+                                                  if enough else None),
             "history_weeks": len(aggregate_rows),
             "history_start": aggregate_rows[0]["report_date"],
             "history": [{"date": r["report_date"], "value": r["net_10y_equivalents"]} for r in aggregate_rows],
@@ -286,6 +298,11 @@ def _funding(observations: list[Observation]) -> dict[str, Any] | None:
     tail_days = [d for d in days if d in tail]
     tail_latest = (tail[tail_days[-1]] - iorb[tail_days[-1]]) * 100 if tail_days else None
     enough = len(medians) >= MIN_HISTORY_SESSIONS
+    streak = 0
+    for value in reversed(spread):
+        if value <= 0:
+            break
+        streak += 1
     return {
         "date": latest_day.isoformat(),
         "sofr_percent": sofr[latest_day],
@@ -298,6 +315,7 @@ def _funding(observations: list[Observation]) -> dict[str, Any] | None:
         "sofr99_minus_iorb_bps": tail_latest,
         "sofr99_date": tail_days[-1].isoformat() if tail_days else None,
         "sofr_above_iorb": None if current_median is None else current_median > 0,
+        "sessions_above_iorb_streak": streak,
         "history_sessions": len(days),
         "history_start": days[0].isoformat(),
         "history": [{"date": d.isoformat(), "value": s} for d, s in zip(days, spread, strict=True)][-130:],
@@ -319,6 +337,8 @@ def _volatility(observations: list[Observation]) -> dict[str, Any] | None:
         "sessions": REALIZED_VOL_SESSIONS,
         "realized_vol_bps_per_day": current,
         "realized_vol_percentile": percentile_rank(series, current) if enough else None,
+        "elevated_threshold_bps_per_day": (value_at_percentile(series, VOL_ELEVATED_PERCENTILE)
+                                           if enough else None),
         "history_sessions": len(series),
         "measure": "population standard deviation of daily DGS10 changes; realized, not implied (not MOVE)",
         "evidence_type": EvidenceType.CALCULATION.value,

@@ -575,6 +575,32 @@ def _basis(view: dict[str, Any]) -> str:
 </section>'''
 
 
+def _synthesis(view: dict[str, Any]) -> str:
+    syn = view.get("synthesis")
+    if not syn or not syn.get("lines"):
+        return ""
+    def item(line: dict[str, Any]) -> str:
+        kind = str(line.get("evidence_type") or "").capitalize()
+        return f'<p>{_text(line["text"])} {_tag(kind) if kind else ""}</p>'
+    watch = "".join(f"<li>{_text(w)}</li>" for w in syn.get("watch") or [])
+    as_of = syn.get("as_of") or {}
+    dates = "; ".join(f"{label} {_day(as_of[key], year=False)}" for key, label in
+                      (("positioning", "positioning"), ("funding", "funding"), ("volatility", "volatility"))
+                      if as_of.get(key))
+    box = "flag-box" if syn.get("tone") in {"watch", "strain"} else "void"
+    return f'''<section id="synthesis" aria-labelledby="h-synthesis">
+<h2 id="h-synthesis">The read</h2>
+<p class="verdict">{_text(syn["headline"])}</p>
+<div class="{box} synth">{"".join(item(x) for x in syn["lines"])}</div>
+<h3 class="sub">Does this point to Fed buying?</h3>
+<div class="synth">{item(syn["fed"])}</div>
+<h3 class="sub">What it means for stocks</h3>
+<div class="synth">{item(syn["equities"])}</div>
+{f'<h3 class="sub">What would change this read</h3><ul class="limits">{watch}</ul>' if watch else ""}
+<p class="small">{_text(syn.get("limit", ""))} Data as of {dates}.</p>
+</section>'''
+
+
 def _cftc_details(cftc: dict[str, Any] | None) -> str:
     if not cftc or not cftc.get("details"):
         return ""
@@ -797,7 +823,7 @@ def render_report(report: dict[str, Any], *, user_event: dict[str, Any] | None =
     body = "".join((
         _header(view, allow_event_input), '<main>',
         _happening(view), _dealers(view), _futures(view), _basis(view), _supply(view), _missing(view),
-        _events(view), _live_tools(user_event, allow_event_input), _sources(view), _reading(view),
+        _events(view), _live_tools(user_event, allow_event_input), _synthesis(view), _sources(view), _reading(view),
         f'<footer>{escape(footer)}</footer></main>',
     ))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -916,6 +942,7 @@ padding:6px 8px;border-radius:4px;white-space:nowrap;display:none;z-index:2}
 .void::before{content:"";position:absolute;left:0;top:0;bottom:0;width:16px;border-radius:3px 0 0 3px;
 background:repeating-linear-gradient(135deg,var(--hatch) 0 2px,transparent 2px 7px);border-right:1px solid var(--rule)}
 .void p,.void ul{margin:4px 0;font-size:15px}
+.synth p{margin:6px 0;max-width:42em}
 .void ul{padding-left:18px}
 .checklist{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;font-size:14px;max-width:42em}
 .checklist ul{margin:0;padding-left:18px}
