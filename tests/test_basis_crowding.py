@@ -264,3 +264,13 @@ def test_heavy_but_not_crowded_is_named_and_not_called_middle():
     assert "just under the crowded line" in syn["lines"][0]["text"]
     assert "middle" not in syn["lines"][0]["text"]
     assert any("growing past 5.4M" in w for w in syn["watch"])
+
+
+def test_state_label_matches_percentile_band():
+    from treasury_flow_radar.analytics.basis_crowding import _state
+    def label(pct):
+        return _state({"short_percentile": pct}, None, None)["label"]
+    assert label(79) == "Large leveraged-fund short, below the crowded line"
+    assert label(50) == "Leveraged-fund short in its typical range"
+    assert label(10) == "Leveraged-fund short smaller than in most weeks"
+    assert _state({"short_percentile": 79}, None, None)["code"] == "NOT_CROWDED"

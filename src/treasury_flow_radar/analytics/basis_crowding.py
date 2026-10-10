@@ -80,7 +80,9 @@ CONTRACT_SPEC_SOURCE = ("https://www.cmegroup.com/education/courses/introduction
                         "understand-treasuries-contract-specifications.html")
 
 # Display rules. Documented constants, not calibrated thresholds.
-CROWDED_PERCENTILE = 80.0       # leveraged-fund short in the top fifth of its stored history
+CROWDED_PERCENTILE = 80.0
+HEAVY_PERCENTILE = 60.0         # label bands below the crowded line; shared with the synthesis
+SMALL_PERCENTILE = 33.0       # leveraged-fund short in the top fifth of its stored history
 VOL_ELEVATED_PERCENTILE = 80.0
 MIN_HISTORY_WEEKS = 52
 MIN_HISTORY_SESSIONS = 120
@@ -361,7 +363,13 @@ def _state(aggregate: Mapping[str, Any] | None, funding: Mapping[str, Any] | Non
     elif crowded:
         code, label = "CROWDED_FUNDING_CALM", "Crowded basis trade, funding calm"
     else:
-        code, label = "NOT_CROWDED", "Leveraged-fund shorts not unusually large"
+        code = "NOT_CROWDED"
+        if pct >= HEAVY_PERCENTILE:
+            label = "Large leveraged-fund short, below the crowded line"
+        elif pct < SMALL_PERCENTILE:
+            label = "Leveraged-fund short smaller than in most weeks"
+        else:
+            label = "Leveraged-fund short in its typical range"
     return {
         "code": code,
         "label": label,

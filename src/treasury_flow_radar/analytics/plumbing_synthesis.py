@@ -13,13 +13,13 @@ from typing import Any
 from treasury_flow_radar.analytics.basis_crowding import (
     CROWDED_PERCENTILE,
     FUNDING_MEDIAN_SESSIONS,
+    HEAVY_PERCENTILE,
+    SMALL_PERCENTILE,
     VOL_ELEVATED_PERCENTILE,
 )
 from treasury_flow_radar.analytics.descriptive import EvidenceType
 
 MINUS = "−"
-SMALL_PERCENTILE = 33.0   # below this, "smaller than in most of the stored history"
-HEAVY_PERCENTILE = 60.0   # at or above this (and below crowded), "larger than in most weeks"
 NEAR_LINE_POINTS = 5.0    # within this many percentile points of the crowded line, say so
 
 EQUITY_MECHANISM = (
