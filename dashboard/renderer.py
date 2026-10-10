@@ -1022,6 +1022,10 @@ function draw(box,o){
 }
 var day=function(s){return Date.parse(s+'T00:00:00Z')/864e5;},undo=function(n){return new Date(n*864e5).toISOString().slice(0,10);};
 function monthTicks(pts,W){var out=[],seen={},every=W<420?2:1,i=0;pts.forEach(function(p){var k=p[0].slice(0,7);if(!seen[k]){seen[k]=1;if(i++%every===0)out.push([day(p[0]),fmtDate(p[0]).split(' ')[0]]);}});return out.slice(1);}
+// Long histories: one label per year (every other year on narrow screens) instead of months.
+function yearTicks(pts,W){var out=[],seen={},years=[];pts.forEach(function(p){var y=p[0].slice(0,4);if(!seen[y]){seen[y]=1;years.push(p[0]);}});
+  var every=Math.max(1,Math.ceil(years.length/(W<420?6:12)));years.slice(1).forEach(function(d,i){if(i%every===0)out.push([day(d),d.slice(0,4)]);});return out;}
+function timeTicks(pts,W){return pts.length&&day(pts[pts.length-1][0])-day(pts[0][0])>730?yearTicks(pts,W):monthTicks(pts,W);}
 function render(){
   var c=document.querySelector('[data-chart="curve"] .plot');
   if(c){var cols=[css('--s1'),css('--s2'),css('--s3')];var mats=D.curve.maturities;var pos={};mats.forEach(function(mm,i){pos[mm.years]=i;});
@@ -1043,11 +1047,11 @@ function render(){
       tipHead:function(x){return'<b>Week of '+fmtDate(undo(x),true)+'</b>';},tipLine:function(s,p){return'$'+p[1].toFixed(1)+'B';}});}
   var b=document.querySelector('[data-chart="basis"] .plot');
   if(b&&D.basis){var bpnt=D.basis.points;draw(b,{label:'Leveraged-fund net, 10-year equivalents',series:[{name:'Net',color:css('--line'),points:bpnt.map(function(p){return[day(p[0]),p[1]/1e6];})}],height:170,
-      xTicks:monthTicks(bpnt,b.clientWidth).filter(function(_,i){return i%3===0;}),yFmt:function(v){return(v<0?'−':'')+Math.abs(v).toFixed(1)+'M';},
+      xTicks:timeTicks(bpnt,b.clientWidth),yFmt:function(v){return(v<0?'−':'')+Math.abs(v).toFixed(1)+'M';},
       tipHead:function(x){return'<b>Report '+fmtDate(undo(x),true)+'</b>';},tipLine:function(s,p){return(p[1]<0?'−':'')+Math.abs(p[1]).toFixed(2)+'M 10y eq.';}});}
   var f=document.querySelector('[data-chart="funding"] .plot');
   if(f&&D.funding){var fp=D.funding.points;draw(f,{label:'SOFR minus IORB',series:[{name:'SOFR − IORB',color:css('--line'),points:fp.map(function(p){return[day(p[0]),p[1]];})}],height:150,
-      xTicks:monthTicks(fp,f.clientWidth),yFmt:function(v){return bp(v);},
+      xTicks:timeTicks(fp,f.clientWidth),yFmt:function(v){return bp(v);},
       tipHead:function(x){return'<b>'+fmtDate(undo(x),true)+'</b>';},tipLine:function(s,p){return'SOFR − IORB '+bp(p[1]);}});}
 }
 render();var w=0;window.addEventListener('resize',function(){clearTimeout(w);w=setTimeout(render,150);});
