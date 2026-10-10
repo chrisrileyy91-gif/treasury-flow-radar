@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from treasury_flow_radar.analytics.attribution import attribute_window
+from treasury_flow_radar.analytics.basis_crowding import basis_setup
 from treasury_flow_radar.analytics.candidates import evaluate_candidates, level_context
 from treasury_flow_radar.analytics.decomposition import decompose_moves
 from treasury_flow_radar.analytics.descriptive import (
@@ -467,6 +468,7 @@ def build_research_report(
         has_value = row.get("value_numeric") is not None or row.get("value_text") is not None
         if observed and has_value and observed > str(entry["observation_date"] or ""):
             entry["observation_date"] = observed
+    basis = basis_setup(source_rows)
     return {
         "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
@@ -508,6 +510,7 @@ def build_research_report(
         "dealer_positions": dealer_summaries,
         "cftc_positions": cftc_summaries,
         "positioning_moves": positioning_flags,
+        "basis_setup": basis,
         "treasury_auctions": auctions,
         "event_study_windows": ["T-5 through T+5", "T-3 through T+3", "T-1 through T+1"],
         "market_confirmation": market_summary,
@@ -524,6 +527,7 @@ def build_research_report(
             "CFTC": "AVAILABLE" if cftc_summaries else "UNAVAILABLE",
             "Treasury auctions": "AVAILABLE" if auctions else "UNAVAILABLE",
             "FRED yields": "AVAILABLE" if any(yields.values()) else "UNAVAILABLE",
+            "Funding (SOFR/IORB)": "AVAILABLE" if basis["funding"] else "UNAVAILABLE",
         },
         "data_freshness": latest_retrieval,
         "source_provenance": [

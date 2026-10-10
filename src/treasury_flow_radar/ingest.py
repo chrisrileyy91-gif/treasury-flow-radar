@@ -27,6 +27,7 @@ FRED_SOURCES = {
     "fred-dfii10": "DFII10", "fred-t10yie": "T10YIE", "fred-threefytp10": "THREEFYTP10",
     "fred-ig-spread": "BAMLC0A0CM", "fred-hy-spread": "BAMLH0A0HYM2", "fred-sp500": "SP500",
     "fred-dollar": "DTWEXBGS",
+    "fred-sofr": "SOFR", "fred-sofr99": "SOFR99", "fred-iorb": "IORB",
 }
 SOURCE_NAMES = (*FRED_SOURCES, "fred-releases", "sec-edgar", "nyfed", "cftc", "treasury-auctions")
 SOURCE_LABELS = {
