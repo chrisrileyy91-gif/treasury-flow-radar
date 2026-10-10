@@ -149,5 +149,6 @@ def test_orchestrator_offers_each_fred_curve_point_as_its_own_source():
                             "fred-dgs10": "DGS10", "fred-dgs30": "DGS30", "fred-dfii10": "DFII10",
                             "fred-t10yie": "T10YIE", "fred-threefytp10": "THREEFYTP10",
                             "fred-ig-spread": "BAMLC0A0CM", "fred-hy-spread": "BAMLH0A0HYM2",
-                            "fred-sp500": "SP500", "fred-dollar": "DTWEXBGS"}
+                            "fred-sp500": "SP500", "fred-dollar": "DTWEXBGS",
+                            "fred-sofr": "SOFR", "fred-sofr99": "SOFR99", "fred-iorb": "IORB"}
     assert set(FRED_SOURCES) <= set(SOURCE_NAMES)

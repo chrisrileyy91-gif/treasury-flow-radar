@@ -485,6 +485,96 @@ def _futures(view: dict[str, Any]) -> str:
 </section>'''
 
 
+def _ord(value: Any) -> _Html | str:
+    return _unknown() if value is None else _ordinal(float(value))
+
+
+def _yes_no(value: Any, yes: str, no: str) -> _Html | str:
+    return _unknown() if value is None else (yes if value else no)
+
+
+def _basis(view: dict[str, Any]) -> str:
+    basis = view.get("basis") or {}
+    crowding = basis.get("crowding") or {}
+    agg = crowding.get("aggregate")
+    funding = basis.get("funding")
+    vol = basis.get("volatility")
+    state = basis.get("state") or {}
+    if not crowding.get("contracts"):
+        return ""
+    if agg is None:
+        figure = '<span class="unknown">Aggregate unavailable: needs all five contracts and the yield curve on the same report date.</span>'
+    else:
+        pct = agg.get("short_percentile")
+        size = (f"a larger short than {pct:.0f}%" if pct >= 50 else f"a smaller short than {100 - pct:.0f}%")
+        rank = (f'{_ord(pct)} percentile of {agg["history_weeks"]} stored weeks since {_day(agg["history_start"])} '
+                f'({size} of them)'
+                if pct is not None else
+                f'only {agg["history_weeks"]} weeks stored; ranking needs at least 52')
+        record = " This is the largest short in the stored history." if agg.get("record_short") else ""
+        figure = (f'<strong class="figure">{_contracts(agg["net_10y_equivalents"])}</strong> 10-year-note equivalents, '
+                  f'{_contracts(agg.get("weekly_change_10y_equivalents"))} on the week, as of {_day(agg["report_date"])}. '
+                  f'That ranks in the {rank}.{record} '
+                  f'Share of open interest: {_num(agg.get("share_of_open_interest_percent"), 1)}% '
+                  f'({_ord(agg.get("share_percentile"))} percentile). {_tag("Estimate")} {_tag("Calculation")}')
+    contract_rows = [[c["contract"], _contracts(c["net_contracts"]), _contracts(c["weekly_change_contracts"]),
+                      _num(c["net_short_share_of_open_interest_percent"], 1), _ord(c["short_percentile"])]
+                     for c in crowding["contracts"]]
+    table = _table([("Contract", "l"), ("Lev. fund net", "r"), ("Week", "r"), ("Short % of OI", "r"),
+                    ("Short pctile", "r")], contract_rows,
+                   caption="Raw contracts per contract; percentile = share of stored weeks with a short this size or smaller.")
+    if funding is None:
+        fund = '<span class="unknown">No SOFR/IORB observations stored yet (FRED series SOFR, SOFR99, IORB).</span>'
+    else:
+        tail = ("" if funding.get("sofr99_minus_iorb_bps") is None else
+                f' The 99th-percentile repo rate is {_bp(funding["sofr99_minus_iorb_bps"])} versus IORB '
+                f'({_day(funding["sofr99_date"], year=False)}).')
+        fund = (f'SOFR {_num(funding["sofr_percent"])}% vs IORB {_num(funding["iorb_percent"])}% on '
+                f'{_day(funding["date"])}: {_bp(funding["sofr_minus_iorb_bps"])}. '
+                f'{funding["median_sessions"]}-session median {_bp(funding["sofr_minus_iorb_median_bps"])} '
+                f'({_ord(funding.get("sofr_minus_iorb_median_percentile"))} percentile).{tail} {_tag("Calculation")}')
+    if vol is None:
+        volt = '<span class="unknown">Not enough 10-year yield history to measure.</span>'
+    else:
+        volt = (f'{_num(vol["realized_vol_bps_per_day"], 1)} bp/day over {vol["sessions"]} sessions to '
+                f'{_day(vol["date"])} ({_ord(vol.get("realized_vol_percentile"))} percentile). '
+                f'Realized, not the MOVE index. {_tag("Calculation")}')
+    checks = (f'<ul class="checks">'
+              f'<li><span class="mark">{"!" if state.get("crowded") else "·"}</span><strong>Crowded:</strong> '
+              f'{_yes_no(state.get("crowded"), "yes", "no")}</li>'
+              f'<li><span class="mark">{"!" if state.get("funding_tight") else "·"}</span><strong>Funding tightening:</strong> '
+              f'{_yes_no(state.get("funding_tight"), "yes, SOFR above IORB", "no, SOFR at or below IORB")}</li>'
+              f'<li><span class="mark">{"!" if state.get("vol_elevated") else "·"}</span><strong>Volatility elevated:</strong> '
+              f'{_yes_no(state.get("vol_elevated"), "yes", "no")}</li></ul>')
+    rules = state.get("rules") or {}
+    method = basis.get("method") or {}
+    box = "flag-box" if state.get("flag") else "void"
+    return f'''<section id="basis" aria-labelledby="h-basis">
+<h2 id="h-basis">Basis-trade setup</h2>
+<div class="{box}"><p><strong>{_text(state.get("label") or "Unknown")}</strong> {_tag("Observation")}</p>{checks}</div>
+<p class="note">{_tag("Mechanism")} Leveraged funds commonly sell futures against repo-financed cash Treasuries and earn the gap. That works while funding is cheap and stable. If repo rates jump, margins rise, or volatility spikes, the positions can unwind together: cash bonds are sold and futures bought back, which drains Treasury liquidity. This panel measures how large the position is and whether funding and volatility are moving against it. It does not say when, or whether, an unwind happens, and it says nothing about the direction of yields.</p>
+<h3 class="sub">Leveraged-fund futures position</h3>
+<p class="lead-sm">{figure}</p>
+<figure class="chart" data-chart="basis" aria-label="Leveraged-fund net position in 10-year-note equivalents, weekly">
+<figcaption>Leveraged-fund net, 10-year-note equivalents (all five contracts, DV01-weighted)</figcaption><div class="plot"></div></figure>
+{table}
+<h3 class="sub">Funding</h3>
+<p class="lead-sm">{fund}</p>
+{"" if funding is None else f'''<figure class="chart" data-chart="funding" aria-label="SOFR minus IORB, daily">
+<figcaption>SOFR minus IORB, basis points, last {len(funding.get("history") or [])} sessions</figcaption><div class="plot"></div></figure>'''}
+<h3 class="sub">Rate volatility</h3>
+<p class="lead-sm">{volt}</p>
+<details class="more"><summary>Rules, method, and limits</summary>
+<ul class="limits"><li>Crowded: {_text(rules.get("crowded", ""))}.</li><li>Funding tightening: {_text(rules.get("funding_tight", ""))}.</li>
+<li>Volatility elevated: {_text(rules.get("vol_elevated", ""))}.</li>
+<li>These thresholds are display rules, not calibrated probabilities.</li>
+<li>10-year equivalents weight each contract by an estimated DV01: cheapest-to-deliver proxied by the shortest note in the CME deliverable basket, priced as a par bond off the stored constant-maturity curve, divided by its 6% conversion factor. Expect errors of roughly 10–20% per contract versus vendor figures. Per-contract rows use raw contracts and do not depend on this estimate.</li>
+<li>{_text(method.get("alignment", ""))}.</li><li>{_text(method.get("limits", ""))}</li>
+<li>A percentile only means something against the history behind it. If that history is short or covers an unusual period, a low rank can still be a large position in absolute terms. Backfilling CFTC history (the TFF report starts in 2006) widens the comparison.</li></ul></details>
+<p class="source">Sources: CFTC Traders in Financial Futures (futures only); FRED SOFR, SOFR99 (NY Fed) and IORB (Board of Governors); FRED DGS2/5/7/10/30; CME Group contract specifications.</p>
+</section>'''
+
+
 def _cftc_details(cftc: dict[str, Any] | None) -> str:
     if not cftc or not cftc.get("details"):
         return ""
@@ -679,6 +769,7 @@ def _live_tools(user_event: dict[str, Any] | None, allow_event_input: bool) -> s
 
 def _chart_payload(view: dict[str, Any]) -> dict[str, Any]:
     dealer = view["dealer"]
+    basis = view.get("basis") or {}
     return {
         "curve": {"maturities": [{"label": label.replace("-year", "y"), "years": years} for _, label, years in MATURITIES],
                   "snapshots": [{"key": s["key"], "name": s["name"], "date": s["date"],
@@ -688,6 +779,9 @@ def _chart_payload(view: dict[str, Any]) -> dict[str, Any]:
                     "events": [[e["date"], e["change_bps"]] for e in view["ten_year_history"]["events"]]},
         "dealer": {"points": [] if dealer is None else
                    [[h["date"], h["value"]] for h in dealer["history"] if h["value"] is not None]},
+        "basis": {"points": [[h["date"], h["value"]] for h in
+                             ((basis.get("crowding") or {}).get("aggregate") or {}).get("history") or []]},
+        "funding": {"points": [[h["date"], h["value"]] for h in (basis.get("funding") or {}).get("history") or []]},
     }
 
 
@@ -702,7 +796,7 @@ def render_report(report: dict[str, Any], *, user_event: dict[str, Any] | None =
               "or raw database dump are included.")
     body = "".join((
         _header(view, allow_event_input), '<main>',
-        _happening(view), _dealers(view), _futures(view), _supply(view), _missing(view),
+        _happening(view), _dealers(view), _futures(view), _basis(view), _supply(view), _missing(view),
         _events(view), _live_tools(user_event, allow_event_input), _sources(view), _reading(view),
         f'<footer>{escape(footer)}</footer></main>',
     ))
@@ -917,6 +1011,14 @@ function render(){
   if(d){var dp=D.dealer.points;draw(d,{label:'Primary dealer net position',series:[{name:'Net position',color:css('--line'),points:dp.map(function(p){return[day(p[0]),p[1]];})}],height:170,
       xTicks:monthTicks(dp,d.clientWidth).filter(function(_,i){return i%2===0;}),yFmt:function(v){return'$'+v.toFixed(0)+'B';},
       tipHead:function(x){return'<b>Week of '+fmtDate(undo(x),true)+'</b>';},tipLine:function(s,p){return'$'+p[1].toFixed(1)+'B';}});}
+  var b=document.querySelector('[data-chart="basis"] .plot');
+  if(b&&D.basis){var bpnt=D.basis.points;draw(b,{label:'Leveraged-fund net, 10-year equivalents',series:[{name:'Net',color:css('--line'),points:bpnt.map(function(p){return[day(p[0]),p[1]/1e6];})}],height:170,
+      xTicks:monthTicks(bpnt,b.clientWidth).filter(function(_,i){return i%3===0;}),yFmt:function(v){return(v<0?'−':'')+Math.abs(v).toFixed(1)+'M';},
+      tipHead:function(x){return'<b>Report '+fmtDate(undo(x),true)+'</b>';},tipLine:function(s,p){return(p[1]<0?'−':'')+Math.abs(p[1]).toFixed(2)+'M 10y eq.';}});}
+  var f=document.querySelector('[data-chart="funding"] .plot');
+  if(f&&D.funding){var fp=D.funding.points;draw(f,{label:'SOFR minus IORB',series:[{name:'SOFR − IORB',color:css('--line'),points:fp.map(function(p){return[day(p[0]),p[1]];})}],height:150,
+      xTicks:monthTicks(fp,f.clientWidth),yFmt:function(v){return bp(v);},
+      tipHead:function(x){return'<b>'+fmtDate(undo(x),true)+'</b>';},tipLine:function(s,p){return'SOFR − IORB '+bp(p[1]);}});}
 }
 render();var w=0;window.addEventListener('resize',function(){clearTimeout(w);w=setTimeout(render,150);});
 if(window.matchMedia)window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',render);

@@ -80,6 +80,25 @@ SUPPORTED_SERIES = {
         "description": "S&P 500 index level at the close (price index, no dividends). FRED keeps 10 years.",
         "instrument_type": "equity_index", "unit": "index", "observation_units": "Index",
     },
+    # Overnight funding (repo) conditions for the basis-trade setup read. Not Treasury yields.
+    "SOFR": {
+        "name": "Secured Overnight Financing Rate",
+        "description": "Volume-weighted median rate on overnight Treasury-collateralized repo, percent; "
+                       "administered by the New York Fed and published the next business day.",
+        "instrument_type": "funding_rate", "unit": "percent", "observation_units": "Percent",
+    },
+    "SOFR99": {
+        "name": "Secured Overnight Financing Rate: 99th Percentile",
+        "description": "99th volume-weighted percentile of the transactions underlying SOFR, percent; "
+                       "the tail of overnight repo pricing.",
+        "instrument_type": "funding_rate", "unit": "percent", "observation_units": "Percent",
+    },
+    "IORB": {
+        "name": "Interest Rate on Reserve Balances",
+        "description": "Rate the Federal Reserve pays on reserve balances, percent (Board of Governors; "
+                       "FRED series begins 2021-07-29 and includes non-business days).",
+        "instrument_type": "policy_rate", "unit": "percent", "observation_units": "Percent",
+    },
     "DTWEXBGS": {
         "name": "Nominal Broad U.S. Dollar Index",
         "description": "Federal Reserve trade-weighted broad dollar index (Jan 2006 = 100), from the H.10 "

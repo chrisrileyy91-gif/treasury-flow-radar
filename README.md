@@ -117,6 +117,23 @@ Values remain in source-native futures contracts (`contracts`). They are not con
 
 The CFTC classifies trader positions into aggregate categories, not named firms or strategies. The selected raw page payload also retains the current-schema fields `change_in_open_interest_all`, `change_in_dealer_long_all`, `change_in_dealer_short_all`, and `change_in_dealer_spread_all`; these source-reported weekly changes are distinct from changes calculated across successive observations. Percent-of-open-interest fields, trader counts, and concentration measures are outside the selected request and normalized scope. The adapter normalizes open interest and the requested position counts. The dataset does not publish nonreportable spreading. TFF is a futures-only report and excludes options. CFTC reports cover markets meeting its reporting criteria; positions and classifications may be revised. This is positioning data, not a directional trading signal. A long or short category does not, by itself, predict Treasury yields.
 
+## Basis-trade setup (crowding, funding, volatility)
+
+`treasury_flow_radar.analytics.basis_crowding` asks how much stress it would take to force an unwind of the cash-futures basis trade, not where yields are going. It combines three CALCULATIONS over stored observations:
+
+| Input | Measure | Source |
+| --- | --- | --- |
+| Crowding | Leveraged-fund net futures position per contract (raw contracts, % of open interest) and summed across the five contracts in 10-year-note equivalents; each ranked as a percentile of its own stored weekly history (at least 52 weeks) | CFTC TFF futures only |
+| Funding | SOFR minus IORB in basis points, same calendar date; 10-session median; SOFR 99th percentile minus IORB | FRED `SOFR`, `SOFR99` (NY Fed), `IORB` (Board of Governors) |
+| Volatility | 20-session realized volatility of daily DGS10 changes, percentile of its history | FRED DGS10 |
+
+The 10-year-equivalent aggregate is an ESTIMATE (`ctd_proxy_par_bond_over_cf`): each contract's DV01 is the DV01 of a par bond at the shortest maturity in the CME deliverable basket (yield interpolated from the stored DGS2/5/7/10/30 curve on or before the report date), scaled to contract face value and divided by its 6% conversion factor. The cheapest-to-deliver issue and its coupon are not ingested, so expect roughly 10–20% error per contract; the per-contract ranks use raw contracts and do not depend on it. An aggregate is computed only on report dates where all five contracts reported.
+
+The displayed state is a documented display rule, not a calibrated probability: *crowded* when the aggregate short is at or above the 80th percentile, *funding tightening* when the 10-session median of SOFR minus IORB is above zero, *volatility elevated* at or above the 80th percentile. "Crowded with funding tightening" is the flagged combination. The MOVE index (implied volatility) is licensed by ICE and is not ingested; realized volatility is shown instead and labeled as such. The cash Treasury and repo legs of any basis trade are not observed, so a leveraged-fund short is consistent with a basis trade without proving one. Percentiles rank against stored history only; widen it with `python -m treasury_flow_radar.ingest --source cftc --start-date 2010-01-01`.
+
+Ingest the funding series with `python -m treasury_flow_radar.ingest --source fred-sofr --source fred-sofr99 --source fred-iorb` (requires `FRED_API_KEY`; the daily publish run includes them).
+
+
 ## Treasury auction and supply ingestion (Stage 6)
 
 Stage 6 uses the official [Treasury Securities Auctions Data](https://fiscaldata.treasury.gov/datasets/treasury-securities-auctions-data/) dataset and its structured [Fiscal Data API endpoint](https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/auctions_query). It contains announced and auctioned marketable Treasury securities. The adapter currently selects source-labeled Notes and Bonds with 2-Year, 5-Year, 7-Year, 10-Year, 20-Year, and 30-Year terms. Bills, TIPS, and floating-rate notes are outside this initial scope. A 20-Year row is kept with the source's own security type (typically `Bond`); the adapter does not replace official `security_type` labels with an inferred category.

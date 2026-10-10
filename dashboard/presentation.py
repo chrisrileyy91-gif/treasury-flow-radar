@@ -71,6 +71,7 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
         "dealer": dealer,
         "positioning_moves": moves,
         "cftc": cftc,
+        "basis": report.get("basis_setup"),
         "auctions": [_auction(item) for item in reversed(auctions[-AUCTION_ROWS:])],
         "evidence": _evidence_status(latest_ten, spread, dealer, cftc, auctions, corporate, market),
         "rate_lock_status": _rate_lock_status(report.get("availability", {}) or {}, corporate, market),
