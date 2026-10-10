@@ -245,3 +245,22 @@ def test_dashboard_report_ranks_basis_on_full_history_but_windows_other_sections
     assert agg["history_weeks"] == 260 and agg["history_start"] == "2015-01-06"
     assert agg["short_percentile"] < 50           # today's short is small next to the old ones
     assert report["scope"]["start_date"] >= "2024-01-01"   # other sections keep the recent window
+
+
+def test_heavy_but_not_crowded_is_named_and_not_called_middle():
+    from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
+    basis = {
+        "crowding": {"aggregate": {"net_10y_equivalents": -5.1e6, "weekly_change_10y_equivalents": -1.2e5,
+                                   "short_percentile": 78.6, "history_weeks": 551,
+                                   "crowded_threshold_10y_equivalents": 5.37e6,
+                                   "peak_short_10y_equivalents": 7.26e6}},
+        "funding": {"date": "2026-10-08", "sofr_minus_iorb_median_bps": -1.5, "sessions_above_iorb_streak": 0},
+        "volatility": {"realized_vol_bps_per_day": 5.2, "realized_vol_percentile": 60.3, "sessions": 20,
+                       "elevated_threshold_bps_per_day": 6.7},
+        "state": {"crowded": False, "funding_tight": False, "vol_elevated": False},
+    }
+    syn = synthesize(basis)
+    assert syn["headline"] == "Treasury plumbing is quiet, but the trade is large."
+    assert "just under the crowded line" in syn["lines"][0]["text"]
+    assert "middle" not in syn["lines"][0]["text"]
+    assert any("growing past 5.4M" in w for w in syn["watch"])
