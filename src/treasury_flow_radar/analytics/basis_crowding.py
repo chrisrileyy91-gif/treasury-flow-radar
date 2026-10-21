@@ -314,6 +314,11 @@ def _funding(observations: list[Observation]) -> dict[str, Any] | None:
         "sofr_minus_iorb_median_bps": current_median,
         "sofr_minus_iorb_median_percentile": (percentile_rank(medians, current_median)
                                               if enough and current_median is not None else None),
+        # Rates are quoted in whole basis points, so many sessions tie; "tighter than X%" counts only
+        # sessions strictly below the current median (compared at 0.01 bp to ignore float noise).
+        "sofr_minus_iorb_median_share_below": (
+            100.0 * sum(round(m, 2) < round(current_median, 2) for m in medians) / len(medians)
+            if enough and current_median is not None else None),
         "sofr99_minus_iorb_bps": tail_latest,
         "sofr99_date": tail_days[-1].isoformat() if tail_days else None,
         "sofr_above_iorb": None if current_median is None else current_median > 0,

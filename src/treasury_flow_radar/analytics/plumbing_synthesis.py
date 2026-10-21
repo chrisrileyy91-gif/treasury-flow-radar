@@ -8,6 +8,7 @@ equity prices, or Federal Reserve decisions, and it never recommends a trade.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import date
 from typing import Any
 
 from treasury_flow_radar.analytics.basis_crowding import (
@@ -21,6 +22,7 @@ from treasury_flow_radar.analytics.descriptive import EvidenceType
 
 MINUS = "−"
 NEAR_LINE_POINTS = 5.0    # within this many percentile points of the crowded line, say so
+THINNING_PERCENTILE = 75.0  # funding below the line but tighter than this share of its history is "thinning"
 
 EQUITY_MECHANISM = (
     "On its own, this setup says nothing about where stocks go. It matters for equities mainly if it "
@@ -109,10 +111,28 @@ def _funding(funding: Mapping[str, Any] | None) -> dict[str, str] | None:
         lasting = f", above it for the last {streak} session{'s' if streak != 1 else ''}" if streak else ""
         text = (f"Overnight funding is tightening: SOFR trades above the Fed's reserve rate "
                 f"({FUNDING_MEDIAN_SESSIONS}-session median {_bp(median)}{lasting}).")
+    elif funding_thinning(funding):
+        start = date.fromisoformat(funding["history_start"]) if funding.get("history_start") else None
+        since = f" since {start:%B} {start.year}" if start else ""
+        text = (f"Overnight funding is still cheap but thinner than usual: SOFR trades below the Fed's reserve "
+                f"rate ({FUNDING_MEDIAN_SESSIONS}-session median {_bp(median)}), yet tighter than in "
+                f"{funding['sofr_minus_iorb_median_share_below']:.0f}% of sessions{since}.")
     else:
         text = (f"Overnight funding is calm: SOFR trades at or below the Fed's reserve rate "
                 f"({FUNDING_MEDIAN_SESSIONS}-session median {_bp(median)}).")
     return _line(text, EvidenceType.CALCULATION)
+
+
+def funding_thinning(funding: Mapping[str, Any] | None) -> bool:
+    """Below the line (median at or under zero) but tighter than most stored history.
+
+    A display rule like the others: the 10-session median of SOFR minus IORB is at or below
+    zero and is strictly tighter than THINNING_PERCENTILE percent of its stored history (ties,
+    common because rates are quoted in whole basis points, do not count)."""
+    if not funding or funding.get("sofr_minus_iorb_median_bps") is None:
+        return False
+    share = funding.get("sofr_minus_iorb_median_share_below")
+    return funding["sofr_minus_iorb_median_bps"] <= 0 and share is not None and share >= THINNING_PERCENTILE
 
 
 def _volatility(vol: Mapping[str, Any] | None) -> dict[str, str] | None:
@@ -171,8 +191,10 @@ def synthesize(basis: Mapping[str, Any] | None) -> dict[str, Any]:
                   "what usually turns a crowded trade into forced selling.")
     elif crowded:
         tone, headline = "watch", "The trade is crowded, but funding is holding."
-        stress = ("The position is large, so the market is more exposed than usual, but cheap, stable "
-                  "funding means nothing is forcing it to unwind.")
+        stress = ("The position is large, so the market is more exposed than usual, but "
+                  + ("funding that is still cheap, if thinner than usual, means nothing is forcing it to unwind yet."
+                     if funding_thinning(funding) else
+                     "cheap, stable funding means nothing is forcing it to unwind."))
     elif len(known) < 3:
         tone, headline = "partial", "Partial read: some inputs are missing."
         stress = "Nothing measured here points to forced selling, but not every input is available."
@@ -184,7 +206,11 @@ def synthesize(basis: Mapping[str, Any] | None) -> dict[str, Any]:
         heavy = ((agg or {}).get("short_percentile") or 0) >= HEAVY_PERCENTILE
         if heavy:
             tone, headline = "quiet", "Treasury plumbing is quiet, but the trade is large."
-            stress = ("The position is larger than in most stored weeks, but calm funding and ordinary "
+            stress = ("The position is larger than in most stored weeks, but funding still below the Fed's rate "
+                      "and ordinary volatility mean nothing is forcing it to unwind yet. Funding is the input "
+                      "to watch: it is thinner than usual."
+                      if funding_thinning(funding) else
+                      "The position is larger than in most stored weeks, but calm funding and ordinary "
                       "volatility mean nothing is forcing it to unwind.")
         else:
             tone, headline = "quiet", "Treasury plumbing is quiet."
