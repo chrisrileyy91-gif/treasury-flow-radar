@@ -76,3 +76,53 @@ def test_page_has_tabs_panels_and_stays_offline():
     assert not re.search(r"<(?:script|link)[^>]+(?:src|href)=['\"]https?://", html, re.IGNORECASE)
     assert "url(http" not in html
     assert font_faces() in html and "font/woff2;base64," in font_faces()
+
+
+def test_crowding_context_compares_to_long_record_and_past_year():
+    from dashboard.overview import crowding_context
+
+    history = [{"date": f"2025-{1 + i // 5:02d}-{1 + i % 5 * 5:02d}", "value": -v}
+               for i, v in enumerate([7.0e6] + [6.0e6] * 50 + [5.18e6])]
+    agg = {"short_percentile": 79.0, "net_10y_equivalents": -5.18e6, "history_weeks": 552,
+           "history_start": "2016-03-08", "crowded_threshold_10y_equivalents": 5.37e6,
+           "peak_short_10y_equivalents": 7.26e6, "net_dv01_usd_per_bp": -2.98e8, "history": history}
+    verdict, points, so_what = crowding_context(agg, crowded=False)
+    assert verdict == "large"
+    assert "$518B" in points[0]                                  # 10-year notes have $100,000 face
+    assert "larger than 79% of the 552 weeks since 2016" in points[1]
+    assert "(4%) under the crowded line" in points[1]
+    assert "near the low end of its 5.18M to 7.00M range" in points[2]
+    assert "$298M per basis point" in so_what and "size alone forces nothing" in so_what
+
+
+def test_funding_context_flags_a_thin_cushion_and_a_hot_tail():
+    from dashboard.overview import funding_context
+
+    funding = {"sofr_minus_iorb_median_bps": -2.0, "sofr_minus_iorb_median_share_below": 83.0,
+               "median_sessions": 10, "sofr_minus_iorb_bps": -3.0, "date": "2026-10-19",
+               "history_start": "2021-07-29", "sofr99_minus_iorb_bps": 5.0}
+    verdict, points, so_what = funding_context(funding, tight=False)
+    assert verdict == "thinning"
+    assert "2 bp below" in points[0] and "Tighter than in 83% of sessions since Jul 2021." in points[1]
+    assert "already above it" in points[2] and "cushion is thinner" in so_what
+    loose = dict(funding, sofr_minus_iorb_median_bps=-8.0, sofr_minus_iorb_median_share_below=10.0)
+    assert funding_context(loose, tight=False)[0] == "loose"
+
+
+def test_flat_funding_history_is_not_called_thinning():
+    from treasury_flow_radar.analytics.plumbing_synthesis import funding_thinning
+
+    # Every session ties at the current median: nothing is strictly looser, so the cushion has not thinned.
+    assert not funding_thinning({"sofr_minus_iorb_median_bps": -2.0, "sofr_minus_iorb_median_percentile": 100.0,
+                                 "sofr_minus_iorb_median_share_below": 0.0})
+    assert not funding_thinning({"sofr_minus_iorb_median_bps": 1.0, "sofr_minus_iorb_median_share_below": 99.0})
+
+
+def test_volatility_context_states_distance_to_the_line():
+    from dashboard.overview import volatility_context
+
+    verdict, points, _ = volatility_context({"realized_vol_percentile": 65.0, "realized_vol_bps_per_day": 5.4,
+                                             "elevated_threshold_bps_per_day": 6.7, "sessions": 20,
+                                             "history_sessions": 5080}, elevated=False)
+    assert verdict == "ordinary"
+    assert "5.4 bp on a typical day" in points[0] and "about 20 years" in points[1] and "24% more movement" in points[1]

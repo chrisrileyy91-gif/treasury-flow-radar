@@ -12,6 +12,8 @@ from datetime import date
 from html import escape
 from typing import Any
 
+from treasury_flow_radar.analytics.plumbing_synthesis import funding_thinning
+
 MINUS = "−"
 FUNDING_SCALE_BPS = 10.0       # the funding track spans ±10 bp of SOFR minus IORB around the zero line
 NEAR_PERCENTILE_POINTS = 5.0   # a percentile within 5 points of its line is "near"
@@ -71,9 +73,9 @@ def sparkline(values: list[float], *, width: int = 300, height: int = 52, baseli
             f'<circle class="spark-end" cx="{end_x:.1f}" cy="{end_y:.1f}" r="3"/></svg>')
 
 
-def _gauge(*, name: str, reading: str, position: float | None, line: float, state: str,
-           left: str, right: str, line_label: str, detail: str) -> str:
-    """One trip-line track: reading as a dot, the rule's line as a brass mark."""
+def _gauge(*, name: str, reading: str, verdict: str, position: float | None, line: float, state: str,
+           left: str, right: str, line_label: str, points: list[str], so_what: str) -> str:
+    """One trip-line track: reading as a dot, the rule's line as a brass mark, then what it means."""
     if position is None:
         track = '<div class="g-track g-empty"></div>'
     else:
@@ -82,10 +84,103 @@ def _gauge(*, name: str, reading: str, position: float | None, line: float, stat
                 if state == "over" else "")
         track = (f'<div class="g-track">{over}<span class="g-line" style="left:{line * 100:.1f}%"></span>'
                  f'<span class="g-dot g-{state}" style="left:{pos:.1f}%"></span></div>')
+    facts = "".join(f"<li>{p}</li>" for p in points)
     return (f'<div class="gauge"><div class="g-head"><span class="g-name">{escape(name)}</span>'
-            f'<span class="g-read g-{state}">{escape(reading)}</span></div>{track}'
+            f'<span class="g-read g-{state}">{escape(reading)}<span class="g-verdict">{escape(verdict)}</span></span></div>{track}'
             f'<div class="g-scale"><span>{escape(left)}</span><span class="g-mid">{escape(line_label)}</span>'
-            f'<span>{escape(right)}</span></div><p class="g-detail">{detail}</p></div>')
+            f'<span>{escape(right)}</span></div><ul class="g-facts">{facts}</ul>'
+            + (f'<p class="g-so"><span class="g-so-l">So what</span>{so_what}</p>' if so_what else "") + '</div>')
+
+
+def _m(value: float) -> str:
+    """10-year-note equivalents in millions, e.g. 5.18M."""
+    return f"{value / 1e6:.2f}M"
+
+
+def crowding_context(agg: dict[str, Any], crowded: bool) -> tuple[str, list[str], str]:
+    """Verdict, context lines and the practical reading for the leveraged-fund short."""
+    pct = agg.get("short_percentile")
+    size = abs(agg["net_10y_equivalents"])
+    verdict = ("—" if pct is None else "crowded" if crowded else "large" if pct >= 70 else
+               "typical" if pct >= 40 else "small")
+    points = [(f'Short <b>{_m(size)}</b> 10-year-note equivalents, about <b>${size * 1e5 / 1e9:,.0f}B</b> of '
+               f'10-year notes at face value.')]
+    if pct is not None:
+        line = agg.get("crowded_threshold_10y_equivalents")
+        gap = "" if line is None else (
+            f", {_m(size - line)} over the crowded line" if size >= line else
+            f", {_m(line - size)} ({(line - size) / line * 100:.0f}%) under the crowded line")
+        start = date.fromisoformat(agg["history_start"]).year
+        points.append(f'By the long record: larger than {pct:.0f}% of the {agg["history_weeks"]} weeks since {start}{gap}.')
+    history = [abs(h["value"]) for h in agg.get("history") or [] if h.get("value") is not None and h["value"] < 0]
+    recent = history[-52:]
+    if len(recent) >= 26:
+        low, high = min(recent), max(recent)
+        place = ("near the low end of" if size <= low + (high - low) / 3 else
+                 "near the top of" if size >= high - (high - low) / 3 else "in the middle of")
+        peak = agg.get("peak_short_10y_equivalents")
+        peak_day = max(agg["history"], key=lambda h: -h["value"])["date"] if agg.get("history") else None
+        below_peak = (f', {(1 - size / peak) * 100:.0f}% below the record {_m(peak)} ({_date(peak_day)}, '
+                      f'{date.fromisoformat(peak_day).year})' if peak and peak_day and size < peak else
+                      ", the largest on record" if peak and size >= peak else "")
+        points.append(f'By the past year: {place} its {_m(low)} to {_m(high)} range{below_peak}.')
+    dv01 = agg.get("net_dv01_usd_per_bp")
+    exposure = ("" if dv01 is None else
+                f"The futures leg carries about ${abs(dv01) / 1e6:,.0f}M per basis point of rate exposure, which "
+                "the cash bonds held against it offset, so a yield move alone does not hurt the trade; "
+                "funding costs and margin calls do. ")
+    so_what = exposure + (
+        "Crowded: if funding or volatility turns, an unusually large position would have to come out at once."
+        if crowded else
+        "Large enough that a forced exit would move the market, but size alone forces nothing."
+        if pct is not None and pct >= 70 else
+        "Not large enough on its own to make an unwind disorderly.")
+    return verdict, points, so_what
+
+
+def funding_context(funding: dict[str, Any], tight: bool) -> tuple[str, list[str], str]:
+    median = funding["sofr_minus_iorb_median_bps"]
+    pct = funding.get("sofr_minus_iorb_median_share_below")
+    thinning = funding_thinning(funding)
+    verdict = "tight" if tight else "loose" if median <= -5 else "thinning" if thinning else "normal"
+    relation = f"{median:.0f} bp above" if median > 0 else f"{abs(median):.0f} bp below" if median < 0 else "level with"
+    points = [(f'Overnight repo (SOFR) runs <b>{relation}</b> what the Fed pays banks on reserves (IORB), '
+               f'{funding["median_sessions"]}-session median; latest {_signed(funding["sofr_minus_iorb_bps"], 0, " bp")} '
+               f'on {_date(funding["date"])}.')]
+    if pct is not None and funding.get("history_start"):
+        start = date.fromisoformat(funding["history_start"])
+        points.append(f'Tighter than in {pct:.0f}% of sessions since {start:%b} {start.year}.')
+    tail = funding.get("sofr99_minus_iorb_bps")
+    if tail is not None:
+        points.append(f'The costliest 1% of repo trades pay <b>{_signed(tail, 0, " bp")}</b> versus IORB'
+                      + (", already above it." if tail > 0 else "."))
+    so_what = ("Financing the cash bonds now costs more than the Fed pays on reserves, so the trade's margin is "
+               "being squeezed: the condition that forces deleveraging." if tight else
+               "Cash is plentiful and the trade is cheap to finance." if median <= -5 else
+               f"Still cheap to finance, {abs(median):.0f} bp from the line, but the cushion is thinner than usual"
+               + (" and the expensive end of repo is already above it." if tail is not None and tail > 0 else ".")
+               if thinning else
+               f"Financing is cheap relative to the Fed's rate, {abs(median):.0f} bp from the line.")
+    return verdict, points, so_what
+
+
+def volatility_context(vol: dict[str, Any], elevated: bool) -> tuple[str, list[str], str]:
+    pct = vol.get("realized_vol_percentile")
+    daily = vol["realized_vol_bps_per_day"]
+    line = vol.get("elevated_threshold_bps_per_day")
+    verdict = "—" if pct is None else "elevated" if elevated else "ordinary" if pct >= 40 else "calm"
+    points = [f'The 10-year moves about <b>{daily:.1f} bp on a typical day</b> (last {vol["sessions"]} sessions).']
+    if pct is not None:
+        years = round(vol.get("history_sessions", 0) / 252)
+        points.append(f'Choppier than {pct:.0f}% of sessions over about {years} years'
+                      + ("" if line is None else
+                         f'; the line is {line:.1f} bp a day, {(line / daily - 1) * 100:.0f}% more movement.'
+                         if daily < line else f'; above the {line:.1f} bp line.'))
+    so_what = ("Exchanges raise futures margin when yields swing like this, so levered funds must post more "
+               "cash: the usual trigger for cutting positions." if elevated else
+               "Margin requirements rise with volatility; at this level they are not forcing anyone out. "
+               "Measured from actual daily moves, not the MOVE index.")
+    return verdict, points, so_what
 
 
 def _percentile_state(pct: float | None, tripped: bool | None) -> str:
@@ -111,34 +206,31 @@ def _instrument(view: dict[str, Any]) -> str:
     word = {"quiet": "Quiet", "watch": "Watch", "strain": "Strain", "partial": "Partial"}.get(tone, "Unread")
 
     pct = None if agg is None else agg.get("short_percentile")
+    c_verdict, c_points, c_so = (("—", ["Not enough stored weeks to rank the position."], "")
+                                 if agg is None else crowding_context(agg, bool(state.get("crowded"))))
     crowd = _gauge(
-        name="Crowding", reading="—" if pct is None else f"{_ordinal(pct)} pct",
+        name="Crowding", reading="—" if pct is None else f"{_ordinal(pct)} pct", verdict=c_verdict,
         position=None if pct is None else pct / 100, line=0.8,
         state=_percentile_state(pct, state.get("crowded")), left="smaller short", right="record",
-        line_label="crowded at 80th",
-        detail=("Not enough stored weeks to rank the position." if agg is None else
-                f'Leveraged funds short <b>{abs(agg["net_10y_equivalents"]) / 1e6:.2f}M</b> 10-year equivalents, '
-                f'ranked against {agg["history_weeks"]} weeks since {date.fromisoformat(agg["history_start"]).year}.'))
+        line_label="crowded at 80th", points=c_points, so_what=c_so)
     median = None if funding is None else funding.get("sofr_minus_iorb_median_bps")
     f_state = ("unknown" if median is None else "over" if state.get("funding_tight") else
                "near" if median >= -NEAR_FUNDING_BPS else "clear")
+    f_verdict, f_points, f_so = (("—", ["No SOFR or IORB observations stored."], "")
+                                 if median is None else funding_context(funding, bool(state.get("funding_tight"))))
     fund = _gauge(
-        name="Funding", reading="—" if median is None else _signed(median, 0, " bp"),
+        name="Funding", reading="—" if median is None else _signed(median, 0, " bp"), verdict=f_verdict,
         position=None if median is None else (median + FUNDING_SCALE_BPS) / (2 * FUNDING_SCALE_BPS), line=0.5,
         state=f_state, left=f"{MINUS}{FUNDING_SCALE_BPS:.0f} bp", right=f"+{FUNDING_SCALE_BPS:.0f} bp",
-        line_label="tight above 0",
-        detail=("No SOFR or IORB observations stored." if funding is None else
-                f'SOFR minus the Fed\'s reserve rate, {funding["median_sessions"]}-session median. '
-                f'Latest {_signed(funding["sofr_minus_iorb_bps"], 0, " bp")} on {_date(funding["date"])}.'))
+        line_label="tight above 0", points=f_points, so_what=f_so)
     vpct = None if vol is None else vol.get("realized_vol_percentile")
+    v_verdict, v_points, v_so = (("—", ["Not enough 10-year history to measure."], "")
+                                 if vol is None else volatility_context(vol, bool(state.get("vol_elevated"))))
     vola = _gauge(
-        name="Volatility", reading="—" if vpct is None else f"{_ordinal(vpct)} pct",
+        name="Volatility", reading="—" if vpct is None else f"{_ordinal(vpct)} pct", verdict=v_verdict,
         position=None if vpct is None else vpct / 100, line=0.8,
         state=_percentile_state(vpct, state.get("vol_elevated")), left="calm", right="extreme",
-        line_label="elevated at 80th",
-        detail=("Not enough 10-year history to measure." if vol is None else
-                f'The 10-year has moved <b>{vol["realized_vol_bps_per_day"]:.1f} bp a day</b> over '
-                f'{vol["sessions"]} sessions. Realized, not the MOVE index.'))
+        line_label="elevated at 80th", points=v_points, so_what=v_so)
     lines = syn.get("lines") or []
     conclusion = escape(lines[-1]["text"]) if lines else ""
     as_of = syn.get("as_of") or {}
