@@ -235,6 +235,21 @@ def _pct(value: float) -> str:
     return f"{value:.0%}".replace("-", "\u2212")
 
 
+def _long_run_sentence(measured: Mapping[str, Any], calibration: Mapping[str, Any]) -> str:
+    """Compare a recent prior with the same type's long-run value (regime context)."""
+    old = measured.get("long_run") or {}
+    span = calibration.get("long_run") or {}
+    if measured.get("source") != "recent" or not old.get("measured") or not span.get("start"):
+        return ""
+    years = f"{span['start'][:4]} to {span['end'][:4]}"
+    recent, longer = max(0.0, measured["estimate"]), max(0.0, old["estimate"])
+    if abs(recent - longer) < 0.10:
+        return f" Over {years} ({old['days']} days) it was about the same, {longer:.0%}."
+    word = "more" if recent > longer else "less"
+    return (f" Over {years} ({old['days']} days) it was {longer:.0%}: this kind of event has moved the 10-year "
+            f"{word} in recent years than over the long run.")
+
+
 def _calibration_rows(calibration: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Measured priors, strongest first; a CALCULATION over stored history."""
     types = (calibration or {}).get("types") or {}
@@ -364,13 +379,17 @@ def _why(attribution: Mapping[str, Any], limit: int = 2) -> list[dict[str, Any]]
             rank_text = f"It ranks second with {c['attributed_bps']:.1f} of {total:.0f} bp."
         measured = (calibration.get("types") or {}).get(c.get("event_type") or "")
         if measured and measured.get("measured"):
-            history = (f"History: on {measured['days']} {c['name']} days ({measured['basis']}), the 10-year typically "
-                       f"moved {measured['event_rms_bps']:.1f} bp, against {measured['quiet_rms_bps']:.1f} bp on "
-                       f"ordinary days. That puts the share of such a day's move that comes from the event at about "
+            years = calibration.get("recent_years")
+            span = (f"over the last {years} years" if measured.get("source") == "recent" and years else
+                    "over all stored history (too few days in the recent window)")
+            history = (f"History {span}: on {measured['days']} {c['name']} days ({measured['basis']}), the 10-year "
+                       f"typically moved {measured['event_rms_bps']:.1f} bp, against {measured['quiet_rms_bps']:.1f} bp "
+                       f"on ordinary days. That puts the share of such a day's move that comes from the event at about "
                        f"{max(0.0, measured['estimate']):.0%} (90% range {_pct(measured['low'])} to "
                        f"{_pct(measured['high'])}), which is its prior.")
             if not measured["distinguishable"]:
                 history += " That range includes zero, so these days are not clearly different from ordinary days."
+            history += _long_run_sentence(measured, calibration)
         elif c["type"] == "corporate_deal":
             history = (f"The deal's prior ({c.get('prior', 0):.2g}) is assumed, not measured: its size in 10-year terms "
                        f"divided by $20B, capped at the strongest measured event ({calibration.get('deal_prior_cap', 1):.2g}). "

@@ -44,9 +44,10 @@ def _share(event_sq: list[float], quiet_sq: list[float]) -> float | None:
 
 
 def calibrate_priors(changes_bps: Mapping[date, float], events: Mapping[date, set[str]], *, before: date,
-                     fallback: Mapping[str, float]) -> dict[str, Any]:
-    """Return {"types": {type: {...}}, "quiet_days", "start", "end"} measured on sessions before `before`."""
-    sample = {d: v for d, v in changes_bps.items() if d < before}
+                     fallback: Mapping[str, float], since: date | None = None) -> dict[str, Any]:
+    """Return {"types": {type: {...}}, "quiet_days", "start", "end"} measured on sessions before `before`
+    (and on or after `since`, when given)."""
+    sample = {d: v for d, v in changes_bps.items() if d < before and (since is None or d >= since)}
     quiet = [v * v for d, v in sample.items() if not events.get(d)]
     types = sorted(set(fallback) | {t for d, ts in events.items() if d in sample for t in ts})
     rng = random.Random(SEED)

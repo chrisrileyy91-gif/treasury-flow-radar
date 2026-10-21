@@ -302,34 +302,51 @@ def _calibration_table(cand: dict[str, Any]) -> str:
     rows = cand.get("calibration_rows") or []
     if not rows:
         return ""
+
+    def long_cell(r: dict[str, Any]) -> str:
+        old = r.get("long_run") or {}
+        if r.get("source") != "recent":
+            return '<td class="r">–</td>'
+        return f'<td class="r">{old["prior"]:.2f}</td>' if old.get("measured") else '<td class="r">–</td>'
     body = []
     for r in rows:
         if r.get("measured"):
             clear = "Yes" if r["distinguishable"] else "No"
-            body.append(f'<tr><td>{escape(r["type"])}</td><td class="r">{r["days"]}</td>'
+            label = escape(r["type"]) + ('<span class="cell-sub">long run only</span>' if r.get("source") == "long run" else "")
+            body.append(f'<tr><td>{label}</td><td class="r">{r["days"]}</td>'
                         f'<td class="r">{r["event_rms_bps"]:.1f}</td><td class="r">{r["prior"]:.2f}</td>'
-                        f'<td class="r">{_share_pct(r["low"])} to {_share_pct(r["high"])}</td><td>{clear}</td></tr>')
+                        f'<td class="r">{_share_pct(r["low"])} to {_share_pct(r["high"])}</td>{long_cell(r)}<td>{clear}</td></tr>')
         else:
             prior = "" if r.get("prior") is None else f'{r["prior"]:.2f}'
             body.append(f'<tr><td>{escape(r["type"])}</td><td class="r">{r["days"]}</td><td>–</td>'
-                        f'<td class="r">{prior}</td><td colspan="2" class="wrap"><span class="unknown">Not measured</span>: '
+                        f'<td class="r">{prior}</td><td colspan="3" class="wrap"><span class="unknown">Not measured</span>: '
                         f'{escape(r["basis"])}</td></tr>')
     body.append(f'<tr><td>Corporate deal</td><td>–</td><td>–</td><td class="r">≤ {cal.get("deal_prior_cap", 1):.2f}</td>'
-                f'<td colspan="2" class="wrap"><span class="unknown">Not measured</span>: size rule, capped at the strongest measured event</td></tr>')
+                f'<td colspan="3" class="wrap"><span class="unknown">Not measured</span>: size rule, capped at the strongest measured event</td></tr>')
     span = ""
     if cal.get("start") and cal.get("end"):
         span = f"{_day(cal['start'])} to {_day(cal['end'])}, {cal['sessions']} sessions"
-        if cal.get("coverage_limited_by"):
-            span += f" (it starts when the stored {cal['coverage_limited_by']} history starts)"
+    years = cal.get("recent_years")
+    long_run = cal.get("long_run") or {}
+    long_text = ""
+    if long_run.get("start") and long_run.get("start") != cal.get("start"):
+        long_text = (f' "Long run" is the same measurement over all {long_run["sessions"]} covered sessions, '
+                     f'{_day(long_run["start"])} to {_day(long_run["end"])}'
+                     + (f' (it starts when the stored {cal["coverage_limited_by"]} history starts)'
+                        if cal.get("coverage_limited_by") else "") + ".")
+    window = f"the last {years} years before the window" if years else "stored history before the window"
     return f'''<details class="more"><summary>Where the weights come from (measured)</summary>
-<p class="small">Each event type's prior is measured from {escape(span)}, before the window being explained. Ordinary days
+<p class="small">Each event type's prior is measured over {window}: {escape(span)}. Ordinary days
 (no scheduled event, {cal.get("quiet_days", 0)} of them) moved the 10-year about {float(next((r["quiet_rms_bps"] for r in rows if r.get("quiet_rms_bps")), 0)):.1f} bp on a typical day.
-The prior is the share of an event day's movement that ordinary days do not have. {_tag("Calculation")}</p>
+The prior is the share of an event day's movement that ordinary days do not have.{escape(long_text)} {_tag("Calculation")}</p>
 <div class="table-wrap"><table><thead><tr><th>Event</th><th class="r">Days</th><th class="r">Move, bp</th>
-<th class="r">Prior</th><th class="r">90% range</th><th>Clear?</th></tr></thead>
+<th class="r">Prior</th><th class="r">90% range</th><th class="r">Long run</th><th>Clear?</th></tr></thead>
 <tbody>{"".join(body)}</tbody></table></div>
-<p class="small">"Move" is the typical (root-mean-square) daily change on those days. "Clear?" is Yes only when the whole 90% range is above zero, meaning those days were clearly more volatile than ordinary days. A negative estimate means those days were calmer than
-ordinary days; the prior is then 0. Two years is a short sample: most ranges are wide, and the numbers will update as history grows.</p></details>'''
+<p class="small">The recent window is used because how much an event moves the 10-year changes with the regime: inflation
+data mattered far more in 2022 and 2023 than in the 2010s. The cost is fewer days, so ranges are wider than the long-run
+ones. A type with too few recent days uses its long-run value ("long run only"). "Move" is the typical (root-mean-square)
+daily change on those days. "Clear?" is Yes only when the whole 90% range is above zero, meaning those days were clearly
+more volatile than ordinary days. A negative estimate means those days were calmer than ordinary days; the prior is then 0.</p></details>'''
 
 
 def _candidate_block(view: dict[str, Any]) -> str:

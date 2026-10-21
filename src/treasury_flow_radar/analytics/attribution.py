@@ -35,12 +35,17 @@ FLAT_BPS = 0.5
 FULL_SIZE_DEAL_USD = 20e9          # 10-year equivalent at which a deal's prior reaches 1
 UNKNOWN_SIZE_DEAL_PRIOR = 0.5
 AUCTION_PRIOR = 0.5
+# Priors are measured over the most recent RECENT_YEARS before the window, because how much an
+# event type moves the 10-year changes with the regime (CPI mattered far more in 2022-23 than in
+# the 2010s). Chosen before looking at results; the long-run value is reported beside it.
+RECENT_YEARS = 3
 
 ASSUMPTIONS = [
     (
-    "Priors for releases, Fed decisions and auctions are measured from stored history before the window: the share "
+    "Priors for releases, Fed decisions and auctions are measured over the 3 years before the window: the share "
     "of the 10-year's day-to-day variance on that event's days that ordinary days (no scheduled event) do not have, "
-    "clamped to 0..1 (see the table). A type with too few days keeps a stated fallback. Corporate deals cannot be "
+    "clamped to 0..1 (see the table, which also shows each type's long-run value). A type with too few recent days "
+    "uses its long-run value, and one with too few days overall keeps a stated fallback. Corporate deals cannot be "
     "measured this way yet (too few dated deals), so their prior is a stated rule: 10-year-equivalent size / $20B, "
     "capped at the strongest measured event type's prior so an untested rule cannot outrank tested ones by default."
     ),
@@ -111,6 +116,35 @@ def calendar_coverage(releases: list[Mapping[str, Any]],
     return first[kind], kind
 
 
+def _years_before(day: date, years: int) -> date:
+    try:
+        return day.replace(year=day.year - years)
+    except ValueError:                       # 29 February
+        return day.replace(year=day.year - years, day=28)
+
+
+LONG_RUN_FIELDS = ("prior", "estimate", "low", "high", "days", "measured", "distinguishable",
+                   "event_rms_bps", "quiet_rms_bps", "basis")
+
+
+def _blend_long_run(recent: dict[str, Any], long_run: Mapping[str, Any]) -> None:
+    """Attach each type's long-run measurement; use it where the recent window has too few days.
+
+    Each type gets "source": "recent" (measured in the recent window), "long run" (too few
+    recent days, measured over all covered history) or "fallback" (neither; the stated value).
+    """
+    for kind, row in recent["types"].items():
+        old = (long_run.get("types") or {}).get(kind) or {}
+        row["long_run"] = {k: old.get(k) for k in LONG_RUN_FIELDS}
+        if row.get("measured"):
+            row["source"] = "recent"
+        elif old.get("measured"):
+            row.update({k: old.get(k) for k in LONG_RUN_FIELDS})
+            row["source"] = "long run"
+        else:
+            row["source"] = "fallback"
+
+
 def _event_days(sessions: set[date], releases: list[Mapping[str, Any]],
                 auctions: list[Mapping[str, Any]], fallback: dict[str, float]) -> dict[date, set[str]]:
     event_days: dict[date, set[str]] = {}
@@ -154,7 +188,15 @@ def attribute_window(*, yields: Mapping[str, Mapping[date, float]],
     event_days = _event_days(set(cal_sessions), cal_releases, cal_auctions, fallback)
     all_changes = {s: (cal_ten[s] - cal_ten[cal_sessions[i - 1]]) * 100 for i, s in enumerate(cal_sessions)
                    if i > 0 and (coverage_start is None or cal_sessions[i - 1] >= coverage_start)}
-    calibration = calibrate_priors(all_changes, event_days, before=in_window[0], fallback=fallback)
+    long_run = calibrate_priors(all_changes, event_days, before=in_window[0], fallback=fallback)
+    recent_start = _years_before(in_window[0], RECENT_YEARS)
+    if coverage_start is not None:
+        recent_start = max(recent_start, coverage_start)
+    calibration = calibrate_priors(all_changes, event_days, before=in_window[0], fallback=fallback,
+                                   since=recent_start)
+    _blend_long_run(calibration, long_run)
+    calibration["recent_years"] = RECENT_YEARS
+    calibration["long_run"] = {k: long_run[k] for k in ("start", "end", "sessions", "quiet_days")}
     calibration["coverage_start"] = coverage_start.isoformat() if coverage_start else None
     calibration["coverage_limited_by"] = limited_by
 
