@@ -90,3 +90,61 @@ def test_long_history_measures_priors_without_changing_the_window():
     assert long["calibration"]["coverage_limited_by"] == "Jobs report"
     assert [s["date"] for s in long["sessions"]] == [s["date"] for s in short["sessions"]]
     assert long["calibration"]["types"]["Jobs report"]["prior"] == pytest.approx(0.75, abs=0.01)
+
+
+def _regime_series(years: int = 8):
+    """Weekdays over `years`; CPI days are calm early and violent in the last two years."""
+    days = [d for d in (date(2018, 1, 1) + timedelta(days=i) for i in range(365 * years)) if d.weekday() < 5]
+    cpi = set(days[3::21])
+    rare = set(days[100:100 + 21 * 10:21])           # ten days, all long before the recent window
+    late = days[-1] - timedelta(days=730)
+    level, ten = 4.0, {}
+    for i, d in enumerate(days):
+        size = 0.02
+        if d in cpi:
+            size = 0.08 if d >= late else 0.02
+        if d in rare:
+            size = 0.05
+        level += size * (1 if i % 2 else -1)
+        ten[d] = round(level, 4)
+    releases = ([{"date": d.isoformat(), "short": "CPI", "kind": "inflation", "weight": 1.0} for d in sorted(cpi)]
+                + [{"date": d.isoformat(), "short": "Rare", "kind": "growth", "weight": 0.3} for d in sorted(rare)])
+    return days, ten, releases
+
+
+def test_recent_priors_track_the_regime_and_carry_the_long_run_value():
+    _days, ten, releases = _regime_series()
+    result = attribute_window(yields={"DGS10": ten}, decomposition_by_date={}, deals=[], auctions=[],
+                              releases=releases)
+    cal = result["calibration"]
+    window_start = date.fromisoformat(result["sessions"][0]["date"])
+    assert cal["recent_years"] == 3
+    assert cal["start"] >= window_start.replace(year=window_start.year - 3).isoformat()
+    assert cal["end"] < window_start.isoformat()
+    cpi = cal["types"]["CPI"]
+    assert cpi["source"] == "recent"
+    # The long run averages six calm years with two violent ones; the recent window sees only the violent ones.
+    assert cpi["prior"] > cpi["long_run"]["prior"] + 0.1
+    assert cal["long_run"]["start"] < cal["start"]
+
+
+def test_type_with_too_few_recent_days_uses_its_long_run_value():
+    _, ten, releases = _regime_series()
+    cal = attribute_window(yields={"DGS10": ten}, decomposition_by_date={}, deals=[], auctions=[],
+                           releases=releases)["calibration"]
+    rare = cal["types"]["Rare"]
+    assert rare["source"] == "long run" and rare["measured"]
+    assert rare["prior"] == pytest.approx(rare["long_run"]["prior"])
+    assert cal["types"]["Treasury auction"]["source"] == "fallback"   # no auctions at all
+
+
+def test_long_run_sentence_names_the_regime_direction():
+    from dashboard.presentation import _long_run_sentence
+
+    cal = {"long_run": {"start": "2010-08-12", "end": "2026-10-09"}}
+    louder = {"source": "recent", "estimate": 0.59, "long_run": {"measured": True, "estimate": -0.1, "days": 83}}
+    assert "moved the 10-year more in recent years" in _long_run_sentence(louder, cal)
+    assert "2010 to 2026 (83 days) it was 0%" in _long_run_sentence(louder, cal)
+    same = dict(louder, estimate=0.05)
+    assert "about the same" in _long_run_sentence(same, cal)
+    assert _long_run_sentence(dict(louder, source="long run"), cal) == ""
