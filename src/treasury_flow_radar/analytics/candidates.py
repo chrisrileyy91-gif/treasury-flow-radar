@@ -246,7 +246,7 @@ def _auction(auction: Mapping[str, Any], day: date, yields: Mapping[str, Mapping
         _check("Large auction", NA if size is None else PASS if float(size) >= LARGE_AUCTION_USD else FAIL,
                "unknown" if size is None else f"${float(size) / 1e9:.0f}B offered"),
     ]
-    return {"type": "treasury_auction", "name": f"{term} {auction.get('security_type') or ''} auction".strip(),
+    return {"type": "treasury_auction", "name": auction_name(auction, term),
             "date": day.isoformat(), "size_usd": size,
             "mechanism": "New supply can require a price concession that lifts yields into the auction.",
             "checks": checks}
@@ -281,3 +281,9 @@ def _release(release: Mapping[str, Any], day: date, decomposition_by_date: Mappi
     return {"type": "macro_release", "name": release.get("short") or release.get("name"),
             "date": day.isoformat(), "size_usd": None, "mechanism": mechanisms.get(kind, ""),
             "checks": checks}
+
+
+def auction_name(auction: Mapping[str, Any], term: str) -> str:
+    """Display name, e.g. "10-Year Note auction" or "10-Year Note reopening"."""
+    kind = "reopening" if auction.get("reopening") == "Yes" else "auction"
+    return f"{term} {auction.get('security_type') or ''} {kind}".replace("  ", " ").strip()

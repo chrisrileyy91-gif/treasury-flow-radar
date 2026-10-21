@@ -1,13 +1,14 @@
 """SQLite persistence for observations and their provenance."""
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import sqlite3
-from typing import Any, Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[3] / "data" / "treasury_flow_radar.sqlite3"
 
@@ -93,12 +94,12 @@ def _timestamp(value: datetime | str | None, *, optional: bool = False) -> str |
         raise ValueError("timestamp is required")
     if isinstance(value, str):
         try:
-            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            value = datetime.fromisoformat(value)  # accepts a trailing "Z" (Python 3.11+)
         except ValueError as exc:
             raise ValueError(f"invalid ISO-8601 timestamp: {value!r}") from exc
     if not isinstance(value, datetime) or value.utcoffset() is None:
         raise ValueError("timestamps must be timezone-aware")
-    return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _json(value: dict[str, Any] | None) -> str:
@@ -142,7 +143,7 @@ def register_source(
     metadata: dict[str, Any] | None = None,
 ) -> int:
     """Register a provider. Re-registering its identifier returns the existing id."""
-    now = _timestamp(datetime.now(timezone.utc))
+    now = _timestamp(datetime.now(UTC))
     conn.execute(
         """INSERT INTO sources(identifier, name, source_type, url, metadata_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(identifier) DO NOTHING""",
@@ -166,7 +167,7 @@ def register_series(
     metadata: dict[str, Any] | None = None,
 ) -> int:
     """Register a provider series or instrument and return its id."""
-    now = _timestamp(datetime.now(timezone.utc))
+    now = _timestamp(datetime.now(UTC))
     conn.execute(
         """INSERT INTO series
         (source_id, identifier, name, description, instrument_type, frequency,
@@ -240,7 +241,7 @@ def insert_observation(
     observation_ts = _timestamp(observation_time)
     publication_ts = _timestamp(publication_time, optional=True)
     retrieval_ts = _timestamp(retrieval_time)
-    created_ts = _timestamp(datetime.now(timezone.utc))
+    created_ts = _timestamp(datetime.now(UTC))
     normalized_metadata = _json(metadata)
     identity = (source_id, series_id, logical_key, revision)
     existing = conn.execute(

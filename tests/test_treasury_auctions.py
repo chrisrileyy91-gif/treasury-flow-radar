@@ -259,3 +259,51 @@ def test_amounts_are_whole_dollars_and_legacy_unit_label_gets_linked_revision(tm
         assert {r["unit"] for r in before if r["id"] in {a["id"] for a in amounts}} == {"thousand_us_dollars"}
     again = ingest_treasury_auctions(database_path=db, client=client([page_one, page_two], clock=later)[0])
     assert again["inserted"] == 0
+
+
+def _reopening_row():
+    """A 10-year reopening as Fiscal Data labels it: remaining term in security_term."""
+    raw = json.loads(fixture("treasury_fiscaldata_auctions_page_1.json"))["data"][0]
+    return dict(raw, cusip="91282CRF0", security_type="Note", security_term="9-Year 10-Month",
+                original_security_term="10-Year", reopening="Yes",
+                auction_date="2026-10-07", issue_date="2026-10-15", original_issue_date="2026-08-17")
+
+
+def test_reopening_is_selected_by_original_term_and_keeps_its_source_label():
+    record = parse_response(envelope([_reopening_row()], 1, 1))[0][0]
+    assert record.security_term == "9-Year 10-Month"      # source label preserved
+    assert record.benchmark_term == "10-Year"
+    assert record.reopening == "Yes"
+
+
+def test_remaining_term_without_a_selected_original_term_is_still_excluded():
+    row = dict(_reopening_row(), security_term="1-Year 10-Month", original_security_term="3-Year")
+    assert parse_response(envelope([row], 1, 1))[0] == ()
+
+
+def test_request_filters_on_original_security_term_so_reopenings_are_returned():
+    rows = json.loads(fixture("treasury_fiscaldata_auctions_page_1.json"))["data"]
+    cli, opener = client([envelope(rows, len(rows), 1)])
+    cli.fetch_history()
+    filter_expression = parse_qs(urlsplit(opener.requests[0][0].full_url).query)["filter"][0]
+    assert "original_security_term:in:(2-Year,5-Year,7-Year,10-Year,20-Year,30-Year)" in filter_expression
+    assert ",security_term:in:" not in filter_expression
+
+
+def test_reopening_is_stored_in_the_benchmark_series_and_loaded_under_it(tmp_path):
+    from treasury_flow_radar.analytics.report import load_observations_read_only
+    from treasury_flow_radar.analytics.research import _auction_records
+
+    db = tmp_path / "reopen.sqlite3"
+    cli, _ = client([envelope([_reopening_row()], 1, 1)])
+    ingest_treasury_auctions(database_path=db, client=cli)
+    with database(db) as conn:
+        identifiers = {row[0] for row in conn.execute("SELECT identifier FROM series")}
+        meta = json.loads(conn.execute("SELECT metadata_json FROM observations LIMIT 1").fetchone()[0])
+    assert identifiers == {"treasury_auction_note_10_year"}
+    assert meta["security_term"] == "9-Year 10-Month" and meta["benchmark_term"] == "10-Year"
+    auctions = _auction_records(load_observations_read_only(db))
+    assert len(auctions) == 1
+    assert auctions[0]["security_term"] == "10-Year"
+    assert auctions[0]["source_security_term"] == "9-Year 10-Month"
+    assert auctions[0]["reopening"] == "Yes"

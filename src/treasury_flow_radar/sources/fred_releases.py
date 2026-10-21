@@ -104,7 +104,7 @@ def fetch_release_dates(client: FredClient, release_id: int, *, start: date | No
     request = Request(f"{RELEASE_DATES_URL}?{urlencode(parameters)}",
                       headers={"Accept": "application/json", "User-Agent": client.user_agent})
     try:
-        with (opener or client._opener)(request, timeout=client.timeout) as response:
+        with client.open(request, opener) as response:
             status = getattr(response, "status", 200)
             body = response.read()
     except HTTPError as exc:

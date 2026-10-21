@@ -26,6 +26,7 @@ from datetime import date
 from typing import Any
 
 from treasury_flow_radar.analytics.calibration import AUCTION_TYPE, calibrate_priors, event_type
+from treasury_flow_radar.analytics.candidates import auction_name as _auction_name
 from treasury_flow_radar.analytics.candidates import deal_rate_risk
 from treasury_flow_radar.analytics.descriptive import EvidenceType
 
@@ -90,29 +91,72 @@ def _first_session_on_or_after(sessions: list[date], day: date) -> int | None:
     return next((i for i, s in enumerate(sessions) if s >= day), None)
 
 
+def calendar_coverage(releases: list[Mapping[str, Any]],
+                      auctions: list[Mapping[str, Any]]) -> tuple[date | None, str | None]:
+    """First date from which every event calendar is stored, and the calendar that sets it.
+
+    A day before some calendar starts cannot be called "ordinary": an event of that type may
+    have happened unrecorded. So calibration uses only days on or after the latest first date.
+    """
+    first: dict[str, date] = {}
+    for release in releases:
+        day, kind = date.fromisoformat(str(release["date"])), event_type(release)
+        first[kind] = min(first.get(kind, day), day)
+    for auction in auctions:
+        day = date.fromisoformat(str(auction["auction_date"]))
+        first[AUCTION_TYPE] = min(first.get(AUCTION_TYPE, day), day)
+    if not first:
+        return None, None
+    kind = max(first, key=lambda k: first[k])
+    return first[kind], kind
+
+
+def _event_days(sessions: set[date], releases: list[Mapping[str, Any]],
+                auctions: list[Mapping[str, Any]], fallback: dict[str, float]) -> dict[date, set[str]]:
+    event_days: dict[date, set[str]] = {}
+    for release in releases:
+        day = date.fromisoformat(str(release["date"]))
+        if day in sessions:
+            event_days.setdefault(day, set()).add(event_type(release))
+        fallback.setdefault(event_type(release), float(release.get("weight") or 0.5))
+    for auction in auctions:
+        day = date.fromisoformat(str(auction["auction_date"]))
+        if day in sessions:
+            event_days.setdefault(day, set()).add(AUCTION_TYPE)
+    return event_days
+
+
 def attribute_window(*, yields: Mapping[str, Mapping[date, float]],
                      decomposition_by_date: Mapping[str, Any], deals: list[Mapping[str, Any]],
                      auctions: list[Mapping[str, Any]], releases: list[Mapping[str, Any]],
-                     window: int = WINDOW_SESSIONS) -> dict[str, Any]:
+                     window: int = WINDOW_SESSIONS,
+                     calibration_history: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Attribute the last `window` sessions.
+
+    `calibration_history`, when given, supplies a longer record for measuring priors only:
+    {"ten": {date: 10-year level}, "releases": [...], "auctions": [...]}. Priors are measured
+    on sessions from the date every event calendar covers (see calendar_coverage) up to the
+    window, so a longer stored history narrows their ranges without changing the window.
+    """
     ten = yields.get("DGS10", {})
     sessions = sorted(ten)
     if len(sessions) <= window:
         return {"status": "INSUFFICIENT DATA", "best": None, "candidates": [], "sessions": [], "calibration": None}
     in_window = sessions[-window:]
-    session_set = set(sessions)
-    event_days: dict[date, set[str]] = {}
     fallback: dict[str, float] = {AUCTION_TYPE: AUCTION_PRIOR}
-    for release in releases:
-        day = date.fromisoformat(str(release["date"]))
-        if day in session_set:
-            event_days.setdefault(day, set()).add(event_type(release))
-        fallback.setdefault(event_type(release), float(release.get("weight") or 0.5))
-    for auction in auctions:
-        day = date.fromisoformat(str(auction["auction_date"]))
-        if day in session_set:
-            event_days.setdefault(day, set()).add(AUCTION_TYPE)
-    all_changes = {s: (ten[s] - ten[sessions[i - 1]]) * 100 for i, s in enumerate(sessions) if i > 0}
+    history = calibration_history or {}
+    cal_ten = {**history.get("ten", {}), **ten}
+    cal_releases = list(history.get("releases") or releases)
+    cal_auctions = list(history.get("auctions") or auctions)
+    _event_days(set(sessions), releases, auctions, fallback)          # fallbacks for window-only types
+    coverage_start, limited_by = calendar_coverage(cal_releases, cal_auctions)
+    cal_sessions = sorted(cal_ten)
+    event_days = _event_days(set(cal_sessions), cal_releases, cal_auctions, fallback)
+    all_changes = {s: (cal_ten[s] - cal_ten[cal_sessions[i - 1]]) * 100 for i, s in enumerate(cal_sessions)
+                   if i > 0 and (coverage_start is None or cal_sessions[i - 1] >= coverage_start)}
     calibration = calibrate_priors(all_changes, event_days, before=in_window[0], fallback=fallback)
+    calibration["coverage_start"] = coverage_start.isoformat() if coverage_start else None
+    calibration["coverage_limited_by"] = limited_by
 
     measured = [v["prior"] for v in calibration["types"].values() if v.get("measured")]
     deal_cap = min(1.0, max(measured)) if measured else 1.0
@@ -163,7 +207,7 @@ def attribute_window(*, yields: Mapping[str, Mapping[date, float]],
         tenor_end = None if years is None else "short end" if years <= 5 else "long end" if years >= 10 else None
         key = f"auction:{day.isoformat()}:{term}"
         auction_prior = prior_for(AUCTION_TYPE)
-        meta[key] = {"type": "treasury_auction", "name": f"{term} {auction.get('security_type') or ''} auction".strip(),
+        meta[key] = {"type": "treasury_auction", "name": _auction_name(auction, term),
                      "date": day.isoformat(), "prior": auction_prior, "event_type": AUCTION_TYPE}
         if index is not None and auction_prior > 0:
             activate(key, index, "auction", auction_prior, tenor_end=tenor_end)
