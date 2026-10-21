@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import time as _time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
@@ -243,6 +244,28 @@ def parse_observations(payload: str | Mapping[str, Any]) -> tuple[FredObservatio
     return tuple(result)
 
 
+# FRED intermittently answers 502/503 or drops the connection. A request is retried on
+# those transient failures only, after these waits (seconds); other HTTP errors fail at once.
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+RETRY_DELAYS_SECONDS = (2.0, 6.0)
+
+
+def open_with_retry(opener: Callable[..., Any], request: Request, *, timeout: float,
+                    sleep: Callable[[float], None]) -> Any:
+    """Open `request`, retrying transient failures; the final failure is re-raised unchanged."""
+    for delay in (*RETRY_DELAYS_SECONDS, None):
+        try:
+            return opener(request, timeout=timeout)
+        except HTTPError as exc:
+            if exc.code not in RETRY_STATUSES or delay is None:
+                raise
+        except (URLError, OSError):
+            if delay is None:
+                raise
+        sleep(delay)
+    raise AssertionError("unreachable")
+
+
 class FredClient:
     """Small FRED API client; credentials are read from FRED_API_KEY by default."""
 
@@ -254,6 +277,7 @@ class FredClient:
         user_agent: str | None = None,
         opener: Callable[..., Any] = urlopen,
         clock: Callable[[], datetime] | None = None,
+        sleep: Callable[[float], None] = _time.sleep,
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("FRED_API_KEY")
         if not self.api_key or not self.api_key.strip():
@@ -266,6 +290,11 @@ class FredClient:
         )
         self._opener = opener
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._sleep = sleep
+
+    def open(self, request: Request, opener: Callable[..., Any] | None = None) -> Any:
+        """Open a FRED request with the client's timeout and transient-failure retries."""
+        return open_with_retry(opener or self._opener, request, timeout=self.timeout, sleep=self._sleep)
 
     def fetch_series(
         self,
@@ -295,7 +324,7 @@ class FredClient:
             headers={"Accept": "application/json", "User-Agent": self.user_agent},
         )
         try:
-            with self._opener(request, timeout=self.timeout) as response:
+            with self.open(request) as response:
                 status = getattr(response, "status", 200)
                 body = response.read()
                 retrieved_at = self._clock()

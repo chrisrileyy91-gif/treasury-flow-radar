@@ -225,13 +225,50 @@ def test_missing_credentials_fail_before_network(monkeypatch):
         FredClient()
 
 
-def test_network_failure_is_explicit():
+def test_network_failure_is_explicit_after_retries():
+    attempts, waits = [], []
+
     def fail(request, timeout):
+        attempts.append(request)
         raise URLError("offline")
 
-    client = FredClient(api_key="a" * 32, opener=fail)
+    client = FredClient(api_key="a" * 32, opener=fail, sleep=waits.append)
     with pytest.raises(FredRequestError, match="network request failed"):
         client.fetch_series("DGS10")
+    assert len(attempts) == 3 and waits == [2.0, 6.0]
+
+
+def test_transient_502_is_retried_and_then_succeeds():
+    from urllib.error import HTTPError
+
+    good = FixtureOpener({"DGS10": response("DGS10", [{"date": "2026-10-05", "value": "4.125"}])})
+    calls, waits = [], []
+
+    def flaky(request, timeout):
+        calls.append(request)
+        if len(calls) == 1:
+            raise HTTPError(request.full_url, 502, "Bad Gateway", {}, None)
+        return good(request, timeout)
+
+    client = FredClient(api_key="a" * 32, opener=flaky, clock=lambda: RETRIEVED, sleep=waits.append)
+    result = client.fetch_series("DGS10")
+    assert len(calls) == 2 and waits == [2.0]
+    assert result.observations[0].value == 4.125
+
+
+def test_client_errors_are_not_retried():
+    from urllib.error import HTTPError
+
+    calls = []
+
+    def bad_request(request, timeout):
+        calls.append(request)
+        raise HTTPError(request.full_url, 400, "Bad Request", {}, None)
+
+    client = FredClient(api_key="a" * 32, opener=bad_request, sleep=lambda _s: None)
+    with pytest.raises(FredRequestError, match="status 400"):
+        client.fetch_series("DGS10")
+    assert len(calls) == 1
 
 
 def test_ingestion_failure_does_not_create_partial_database_changes(tmp_path):

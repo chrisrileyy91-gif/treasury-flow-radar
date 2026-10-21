@@ -88,9 +88,11 @@ def build_research_report(
     Input rows are expected to include source/series identifiers and provenance
     columns returned by :func:`load_observations_read_only`.
 
-    ``history_rows``, when supplied, feeds only the basis-trade setup read, which ranks
-    positioning, funding, and volatility against the longest stored history. Every other
-    section uses ``rows``. When omitted, the basis read uses ``rows`` too.
+    ``history_rows``, when supplied, feeds two things only: the basis-trade setup read, which
+    ranks positioning, funding, and volatility against the longest stored history, and the
+    measurement of attribution priors (10-year changes on event and ordinary days over the
+    span every event calendar covers). Every other section uses ``rows``. When omitted,
+    both use ``rows`` too.
     """
     if start_date > end_date:
         raise ValueError("start_date must not be after end_date")
@@ -474,7 +476,9 @@ def build_research_report(
         has_value = row.get("value_numeric") is not None or row.get("value_text") is not None
         if observed and has_value and observed > str(entry["observation_date"] or ""):
             entry["observation_date"] = observed
-    basis = basis_setup(source_rows if history_rows is None else [dict(r) for r in history_rows])
+    history = None if history_rows is None else [dict(r) for r in history_rows]
+    basis = basis_setup(source_rows if history is None else history)
+    calibration_history = None if history is None else _calibration_history(history, fomc_decisions)
     return {
         "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
@@ -509,7 +513,8 @@ def build_research_report(
             window=sorted(yield_levels.get("DGS10", {}))[-5:]),
         "attribution": attribute_window(
             yields=yield_levels, decomposition_by_date=decomposition["by_date"],
-            deals=all_deals, auctions=auctions, releases=releases),
+            deals=all_deals, auctions=auctions, releases=releases,
+            calibration_history=calibration_history),
         "calendar_notes": calendar_notes,
         "curated_deal_count": len(deals or []),
         "edgar_deal_count": len(all_deals) - len(deals or []),
@@ -763,6 +768,11 @@ def _auction_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for key in ("security_type", "security_term", "cusip", "reopening"):
             if meta.get(key) is not None:
                 item[key] = meta[key]
+        # Reopenings are labelled with their remaining term; analytics group by benchmark.
+        # Rows stored before benchmark_term existed were new issues, whose label is the benchmark.
+        if meta.get("benchmark_term") is not None:
+            item["source_security_term"] = meta.get("security_term")
+            item["security_term"] = meta["benchmark_term"]
         provenance[auction_id] = {
             "source_identifier": row.get("source_identifier"), "source_url": row.get("source_url"),
             "observation_id": row.get("observation_id"), "raw_record_id": row.get("raw_record_id"),
@@ -779,6 +789,8 @@ def _auction_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "auction_date": item["auction_date"],
             "security_type": item.get("security_type"),
             "security_term": item.get("security_term"),
+            "source_security_term": item.get("source_security_term") or item.get("security_term"),
+            "reopening": item.get("reopening"),
             "offering_amount": item.get("offering_amt"),
             "offering_amount_unit": item.get("offering_amt_unit") or "us_dollars",
             "accepted_amount": item.get("total_accepted"),
@@ -793,3 +805,15 @@ def _auction_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         })
     return sorted(result, key=lambda item: (item["auction_date"], item.get("cusip") or ""))
 
+
+
+def _calibration_history(rows: list[dict[str, Any]],
+                         fomc_decisions: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Inputs for measuring attribution priors over the full stored history."""
+    ten: dict[date, float] = {}
+    for r in rows:
+        if r.get("series_identifier") == "DGS10" and r.get("value_numeric") is not None:
+            ten[date.fromisoformat(str(r["observation_time"])[:10])] = float(r["value_numeric"])
+    releases, _ = _release_calendar(rows)
+    auctions = _auction_records([r for r in rows if r.get("source_identifier") == "U.S. Treasury Fiscal Data"])
+    return {"ten": ten, "releases": releases + list(fomc_decisions or []), "auctions": auctions}

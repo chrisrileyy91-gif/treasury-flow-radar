@@ -85,6 +85,7 @@ class Auction:
     cusip: str
     security_type: str
     security_term: str
+    benchmark_term: str
     announcement_date: date | None
     auction_date: date
     issue_date: date | None
@@ -162,9 +163,14 @@ def _number(value: Any, field: str) -> tuple[str | None, float | None]:
 def _auction(row: Mapping[str, Any], index: int) -> Auction | None:
     security_type = _text(row.get("security_type"), "security_type", required=True)
     term = _text(row.get("security_term"), "security_term", required=True)
+    original_term = _text(row.get("original_security_term"), "original_security_term")
     # This implementation targets nominal Notes and Bonds at the specified terms.
-    # Preserve source labels and explicitly exclude TIPS and FRNs.
-    if security_type not in SECURITY_TYPES or term not in SECURITY_TERMS:
+    # A reopening is labelled with its remaining term ("9-Year 10-Month") and carries the
+    # benchmark in original_security_term ("10-Year"), so selection uses the original term
+    # when the source supplies one. The source's own security_term label is preserved.
+    # TIPS and FRNs are explicitly excluded.
+    benchmark = original_term if original_term in SECURITY_TERMS else term
+    if security_type not in SECURITY_TYPES or benchmark not in SECURITY_TERMS:
         return None
     if _text(row.get("inflation_index_security"), "inflation_index_security") == "Yes":
         return None
@@ -188,13 +194,14 @@ def _auction(row: Mapping[str, Any], index: int) -> Auction | None:
         cusip=cusip,
         security_type=security_type,
         security_term=term,
+        benchmark_term=benchmark,
         announcement_date=parsed_dates["announcemt_date"],
         auction_date=auction_date,
         issue_date=parsed_dates["issue_date"],
         maturity_date=parsed_dates["maturity_date"],
         record_date=parsed_dates["record_date"],
         original_issue_date=parsed_dates["original_issue_date"],
-        original_security_term=_text(row.get("original_security_term"), "original_security_term"),
+        original_security_term=original_term,
         reopening=_text(row.get("reopening"), "reopening"),
         values=tuple(values),
         source_fields=tuple((field, row.get(field)) for field in FIELDS if field in row),
@@ -271,7 +278,8 @@ class TreasuryAuctionClient:
         page_number = 1
         filters = [( 
             "security_type:in:(Note,Bond),"
-            "security_term:in:(2-Year,5-Year,7-Year,10-Year,20-Year,30-Year),"
+            # original_security_term, not security_term: reopenings carry a remaining-term label.
+            "original_security_term:in:(2-Year,5-Year,7-Year,10-Year,20-Year,30-Year),"
             "inflation_index_security:eq:No,floating_rate:eq:No"
         )]
         if start_date:
@@ -354,8 +362,8 @@ class TreasuryAuctionClient:
 
 def _series(auction: Auction) -> tuple[str, str]:
     safe_type = auction.security_type.lower()
-    safe_term = auction.security_term.lower().replace("-", "_")
-    return f"treasury_auction_{safe_type}_{safe_term}", f"{auction.security_term} Treasury {auction.security_type} auctions"
+    safe_term = auction.benchmark_term.lower().replace("-", "_")
+    return f"treasury_auction_{safe_type}_{safe_term}", f"{auction.benchmark_term} Treasury {auction.security_type} auctions"
 
 
 def ingest_treasury_auctions(
@@ -405,7 +413,7 @@ def ingest_treasury_auctions(
                     description="Official Fiscal Data auction rows; security type/term follow source values.",
                     instrument_type=f"treasury_{auction.security_type.lower()}", frequency="auction",
                     default_unit=None, metadata={"security_type": auction.security_type,
-                                                 "security_term": auction.security_term,
+                                                 "security_term": auction.benchmark_term,
                                                  "dataset_id": DATASET_ID},
                 )
                 obs_time = datetime.combine(auction.auction_date, time.min, tzinfo=UTC)
@@ -450,6 +458,7 @@ def ingest_treasury_auctions(
                             "source_identifier": auction.source_id, "source_field": field,
                             "source_record_fields": dict(auction.source_fields),
                             "security_type": auction.security_type, "security_term": auction.security_term,
+                            "benchmark_term": auction.benchmark_term,
                             "cusip": auction.cusip, "dates": dates,
                             "reopening": auction.reopening,
                             "new_issue_or_reopening": (

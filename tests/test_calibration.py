@@ -59,3 +59,34 @@ def test_assumed_deal_prior_is_capped_at_the_strongest_measured_prior():
     assert result["calibration"]["deal_prior_cap"] == pytest.approx(measured)
     deal = next(c for c in result["candidates"] if c["type"] == "corporate_deal")
     assert deal["prior"] == pytest.approx(measured)             # 80B deal would be 1.0 uncapped
+
+
+def test_calendar_coverage_starts_where_the_shortest_calendar_starts():
+    from treasury_flow_radar.analytics.attribution import calendar_coverage
+
+    releases = [{"date": "2006-01-31", "short": "FOMC decision"}, {"date": "2010-02-12", "short": "CPI"},
+                {"date": "2010-03-12", "short": "CPI"}]
+    auctions = [{"auction_date": "2024-10-28"}]
+    assert calendar_coverage(releases, auctions) == (date(2024, 10, 28), "Treasury auction")
+    assert calendar_coverage(releases, []) == (date(2010, 2, 12), "CPI")
+    assert calendar_coverage([], []) == (None, None)
+
+
+def test_long_history_measures_priors_without_changing_the_window():
+    days = [d for d in (date(2020, 1, 1) + timedelta(days=i) for i in range(900)) if d.weekday() < 5]
+    jobs = set(days[5:-10:21])
+    level, ten = 4.0, {}
+    for i, d in enumerate(days):
+        level += (0.04 if d in jobs else 0.02) * (1 if i % 2 else -1)
+        ten[d] = round(level, 4)
+    releases = [{"date": d.isoformat(), "short": "Jobs report", "kind": "labor", "weight": 1.0} for d in sorted(jobs)]
+    recent = {d: v for d, v in ten.items() if d >= days[-60]}
+    short = attribute_window(yields={"DGS10": recent}, decomposition_by_date={}, deals=[], auctions=[],
+                             releases=releases)
+    long = attribute_window(yields={"DGS10": recent}, decomposition_by_date={}, deals=[], auctions=[],
+                            releases=releases, calibration_history={"ten": ten, "releases": releases})
+    assert long["calibration"]["types"]["Jobs report"]["days"] > 3 * short["calibration"]["types"]["Jobs report"]["days"]
+    assert long["calibration"]["coverage_start"] == min(jobs).isoformat()
+    assert long["calibration"]["coverage_limited_by"] == "Jobs report"
+    assert [s["date"] for s in long["sessions"]] == [s["date"] for s in short["sessions"]]
+    assert long["calibration"]["types"]["Jobs report"]["prior"] == pytest.approx(0.75, abs=0.01)

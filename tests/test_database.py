@@ -1,15 +1,21 @@
-from datetime import datetime, timezone
 import sqlite3
+from datetime import UTC, datetime
 
 import pytest
 
 from treasury_flow_radar.database import (
-    DuplicateObservationError, connect, database, get_observations,
-    get_observations_as_of, initialize_database, insert_observation,
-    insert_raw_record, register_series, register_source,
+    DuplicateObservationError,
+    connect,
+    database,
+    get_observations,
+    get_observations_as_of,
+    initialize_database,
+    insert_observation,
+    insert_raw_record,
+    register_series,
+    register_source,
 )
 
-UTC = timezone.utc
 TUE = datetime(2026, 10, 5, 16, tzinfo=UTC)
 FRI = datetime(2026, 10, 7, 12, tzinfo=UTC)
 SAT = datetime(2026, 10, 8, 12, tzinfo=UTC)
@@ -60,7 +66,7 @@ def test_foreign_keys_are_enforced(db_path):
     with database(db_path) as conn:
         with pytest.raises(sqlite3.IntegrityError):
             register_series(conn, source_id=999, identifier="X", name="X")
-        source, series = setup_source(conn)
+        source, _series = setup_source(conn)
         with pytest.raises(sqlite3.IntegrityError):
             insert_observation(conn, source_id=source, series_id=999, logical_key="x",
                                observation_time=TUE, retrieval_time=FRI)
@@ -69,9 +75,9 @@ def test_foreign_keys_are_enforced(db_path):
 def test_exact_duplicate_is_idempotent_and_conflict_rejected(db_path):
     with database(db_path) as conn:
         source, series = setup_source(conn)
-        args = dict(source_id=source, series_id=series, logical_key="k",
-                    observation_time=TUE, retrieval_time=FRI, publication_time=FRI,
-                    value_text="five")
+        args = {"source_id": source, "series_id": series, "logical_key": "k",
+                "observation_time": TUE, "retrieval_time": FRI, "publication_time": FRI,
+                "value_text": "five"}
         first = insert_observation(conn, **args)
         assert insert_observation(conn, **args) == first
         with pytest.raises(DuplicateObservationError):

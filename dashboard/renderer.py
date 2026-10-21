@@ -297,6 +297,8 @@ def _calibration_table(cand: dict[str, Any]) -> str:
     span = ""
     if cal.get("start") and cal.get("end"):
         span = f"{_day(cal['start'])} to {_day(cal['end'])}, {cal['sessions']} sessions"
+        if cal.get("coverage_limited_by"):
+            span += f" (it starts when the stored {cal['coverage_limited_by']} history starts)"
     return f'''<details class="more"><summary>Where the weights come from (measured)</summary>
 <p class="small">Each event type's prior is measured from {escape(span)}, before the window being explained. Ordinary days
 (no scheduled event, {cal.get("quiet_days", 0)} of them) moved the 10-year about {float(next((r["quiet_rms_bps"] for r in rows if r.get("quiet_rms_bps")), 0)):.1f} bp on a typical day.

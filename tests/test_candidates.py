@@ -133,3 +133,10 @@ def test_candidate_with_only_timing_testable_ranks_last():
                   {"date": days[-1].isoformat(), "kind": "labor", "short": "Jobs report"}])
     assert [c["name"] for c in result["candidates"]] == ["Jobs report", "Weekend item"]
     assert result["candidates"][1]["testable"] is False
+
+
+def test_auction_name_marks_reopenings():
+    from treasury_flow_radar.analytics.candidates import auction_name
+
+    assert auction_name({"security_type": "Note", "reopening": "Yes"}, "10-Year") == "10-Year Note reopening"
+    assert auction_name({"security_type": "Bond", "reopening": "No"}, "30-Year") == "30-Year Bond auction"
