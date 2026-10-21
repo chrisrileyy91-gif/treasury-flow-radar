@@ -216,12 +216,15 @@ def test_missing_funding_does_not_claim_calm():
     assert not any("forced selling." == line["text"][-15:] for line in syn["lines"][:-1])
 
 
-def test_synthesis_renders_near_end_of_page():
+def test_plumbing_read_leads_the_page_and_its_tab():
     from dashboard.renderer import render_report
     from treasury_flow_radar.analytics.research import build_research_report
     rows = _with_funding(_history(60, 90_000.0), 4.38)
     page = render_report(build_research_report(rows, start_date=date(2025, 1, 1), end_date=date(2026, 12, 31)))
-    assert page.index('id="synthesis"') > page.index('id="basis"')
+    # The overview opens on the plumbing instrument; in the Plumbing tab the read precedes the detail.
+    assert page.index('class="ov-block ov-hero"') < page.index('id="panel-plumbing"')
+    assert page.index('id="panel-plumbing"') < page.index('id="synthesis"') < page.index('id="basis"')
+    assert "trip lines crossed" in page
     assert "What it means for stocks" in page and "Does this point to Fed buying?" in page
 
 

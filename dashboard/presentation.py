@@ -546,13 +546,18 @@ def _auction(item: Mapping[str, Any]) -> dict[str, Any]:
         if value is None:
             return None
         return float(value) if unit in (None, "us_dollars") else None
+    # Fiscal Data lists an announced auction before it is held. With no results yet, the only
+    # rate on the row is a reopened issue's coupon, which is not an auction yield.
+    upcoming = item.get("bid_to_cover") is None and item.get("accepted_amount") is None
     return {
         "date": item.get("auction_date"),
         "security": " ".join(x for x in (item.get("security_term"), item.get("security_type")) if x),
         "offering_usd": dollars(item.get("offering_amount"), item.get("offering_amount_unit")),
         "bid_to_cover": item.get("bid_to_cover"),
-        "yield": item.get("yield_or_rate"),
+        "yield": None if upcoming else item.get("yield_or_rate"),
         "cusip": item.get("cusip"),
+        "reopening": item.get("reopening") == "Yes",
+        "upcoming": upcoming,
     }
 
 
