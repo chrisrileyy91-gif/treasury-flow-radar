@@ -354,6 +354,15 @@ python -c "import gzip,shutil;shutil.copyfileobj(gzip.open('data/treasury_flow_r
 
 Running ingestion locally afterwards only changes your local copy; the next scheduled run continues from the cloud copy.
 
+### Layout
+
+The page uses the Meridian ("the update") visual language: its colour tokens and its three typefaces (JetBrains Mono for figures and labels, DM Sans for text, Cormorant Garamond for headings), embedded from `dashboard/fonts` under the SIL Open Font License so the snapshot stays fully offline. It is organised as an instrument with drill-down tabs (`dashboard/overview.py`, `TABS` in `dashboard/renderer.py`):
+
+- **Overview** opens on the plumbing read: the synthesis tone and headline, then each basis-trade input (crowding, funding, volatility) drawn as a track against its trip line, with the number of lines crossed. Below it: the 10-year level and 5-session curve, the share of the window's move each candidate fits, dealer and leveraged-fund positioning, and the latest coupon auctions (reopenings and upcoming auctions are marked). Every figure comes from the same view model as the detail tabs.
+- **Plumbing**: the read, then the basis-trade detail and charts. **Moves**: level, candidates and their checks, cross-market context, channel decomposition, curve, large moves. **Positioning**: dealers and futures by group. **Supply**: recent auctions. **Method**: what evidence is missing, sources and freshness, how to read the page.
+
+Tabs switch with the URL hash (`#plumbing`), and a link to any section id (for example `#basis`) opens its tab at that section. Without JavaScript every panel is shown in order.
+
 ### Move decomposition ("Through which channel?")
 
 The FRED adapter also ingests `DFII10` (10-year real/TIPS yield), `T10YIE` (10-year breakeven inflation), and `THREEFYTP10` (the Board of Governors' daily term-premium estimate for a 10-year zero-coupon bond, published with a lag of about a week). `treasury_flow_radar.analytics.decomposition` puts each 10-year change over 1 and 5 sessions next to the real-yield and breakeven changes for the same dates, reports the gap `nominal − real − breakeven` instead of assuming it is zero, reports the latest published term premium separately (it is a model estimate, never mixed into the identity), and names the curve move from the 2-year and 30-year changes (bear/bull steepener/flattener, twist; ±0.5 bp counts as unchanged). These are CALCULATIONS: they say which channel moved, not why. Explanations shown beside them are labelled MECHANISM or HYPOTHESIS.
