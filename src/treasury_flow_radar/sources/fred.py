@@ -160,11 +160,25 @@ class IngestionResult:
     missing: int
 
 
+MAINTENANCE_MESSAGE = "FRED is down for maintenance: it served its maintenance page instead of data"
+
+
+def is_maintenance_page(payload: str) -> bool:
+    """FRED answers HTTP 200 with an HTML "Site Maintenance" page while it is down (seen 2026-10-21).
+
+    Without this check that reads as "invalid JSON", which looks like a bug in this project.
+    """
+    head = payload.lstrip()[:20000].lower()
+    return head.startswith("<") and "maintenance" in head
+
+
 def parse_observations(payload: str | Mapping[str, Any]) -> tuple[FredObservation, ...]:
     """Validate and normalize the observations array from FRED's JSON response."""
     try:
         document = json.loads(payload) if isinstance(payload, str) else payload
     except (json.JSONDecodeError, TypeError) as exc:
+        if isinstance(payload, str) and is_maintenance_page(payload):
+            raise FredResponseError(MAINTENANCE_MESSAGE) from exc
         raise FredResponseError("FRED returned invalid JSON") from exc
     if not isinstance(document, Mapping):
         raise FredResponseError("FRED response must be a JSON object")

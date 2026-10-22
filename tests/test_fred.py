@@ -307,3 +307,20 @@ def test_five_curve_points_ingest_as_separate_series(tmp_path):
     assert names["DGS30"] == "30-Year Treasury Constant Maturity Rate"
     with pytest.raises(ValueError, match="unsupported ingestion series"):
         ingest_fred(["DGS3MO"], database_path=db_path, client=fixed_client(payloads))
+
+
+MAINTENANCE_PAGE = (
+    "<!DOCTYPE html>\n<html><head><title>Site Maintenance | St. Louis Fed</title></head>"
+    "<body><h1>We'll be back soon!</h1></body></html>"
+)
+
+
+def test_maintenance_page_is_named_not_called_invalid_json():
+    """2026-10-21: every FRED request got the HTML maintenance page with HTTP 200."""
+    with pytest.raises(FredResponseError, match="FRED is down for maintenance"):
+        parse_observations(MAINTENANCE_PAGE)
+
+
+def test_other_html_is_still_invalid_json():
+    with pytest.raises(FredResponseError, match="invalid JSON"):
+        parse_observations("<html><body>Bad gateway</body></html>")

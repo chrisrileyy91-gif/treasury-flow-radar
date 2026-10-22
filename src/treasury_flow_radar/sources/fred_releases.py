@@ -30,12 +30,14 @@ from treasury_flow_radar.database import (
     register_source,
 )
 from treasury_flow_radar.sources.fred import (
+    MAINTENANCE_MESSAGE,
     SOURCE_IDENTIFIER,
     SOURCE_NAME,
     SOURCE_URL,
     FredClient,
     FredRequestError,
     FredResponseError,
+    is_maintenance_page,
 )
 
 RELEASE_DATES_URL = "https://api.stlouisfed.org/fred/release/dates"
@@ -78,6 +80,8 @@ def parse_release_dates(payload: str, release_id: int) -> tuple[date, ...]:
     try:
         document = json.loads(payload)
     except json.JSONDecodeError as exc:
+        if is_maintenance_page(payload):
+            raise FredResponseError(MAINTENANCE_MESSAGE) from exc
         raise FredResponseError("FRED release dates response is not valid JSON") from exc
     rows = document.get("release_dates") if isinstance(document, Mapping) else None
     if not isinstance(rows, list):
