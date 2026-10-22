@@ -85,3 +85,9 @@ def test_report_ignores_daily_fred_101_rows_when_ranking():
                      "revision": 1, "metadata": {"release_id": 101, "short_name": "FOMC decision", "kind": "policy"}})
     report = build_research_report(rows, start_date=date(2026, 9, 1), end_date=date(2026, 10, 2))
     assert not [c for c in report["candidates"]["candidates"] if c["name"].startswith("FOMC")]
+
+
+def test_release_calendar_names_the_maintenance_page():
+    page = "<html><head><title>Site Maintenance | St. Louis Fed</title></head></html>"
+    with pytest.raises(FredResponseError, match="FRED is down for maintenance"):
+        parse_release_dates(page, 10)

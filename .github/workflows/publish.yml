@@ -119,7 +119,7 @@ jobs:
 
       - name: Build the page
         run: |
-          python -m dashboard.export --database "$DB" --output site/index.html
+          python -m dashboard.export --database "$DB" --output site/index.html --ingest-report ingest-report.json
           # Publish the run's per-source ingestion report (no secrets are in it) for diagnosis.
           cp ingest-report.json site/status.json 2>/dev/null || echo '{}' > site/status.json
 
@@ -133,6 +133,15 @@ jobs:
             cat ingest-report.json 2>/dev/null || echo "{}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Pheme posts only when a FRED source failed (or the run left no readable report); silent
+      # otherwise. Needs the DISCORD_PHEME_WEBHOOK secret; without it the step just prints.
+      - name: Tell Pheme if FRED failed
+        if: always()
+        continue-on-error: true   # a failed alert must never block publishing
+        env:
+          DISCORD_PHEME_WEBHOOK: ${{ secrets.DISCORD_PHEME_WEBHOOK }}
+        run: python -m treasury_flow_radar.alert ingest-report.json
 
       - uses: actions/configure-pages@v5
 

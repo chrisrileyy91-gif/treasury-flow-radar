@@ -56,6 +56,8 @@ def build_dashboard_view(report: Mapping[str, Any], *, event_limit: int = 60) ->
         "generated_at": report.get("generated_at"),
         "scope": dict(report.get("scope", {})),
         "data_through": max((row["date"] for row in curve["rows"] if row["date"]), default=None),
+        # Set by the publish run when its FRED pull failed, so the date above is older than it should be.
+        "inspect_fred": bool((report.get("run_health") or {}).get("fred_failed")),
         "curve": curve,
         "curve_read": _curve_read(curve["rows"]),
         "channel": _channel(report.get("move_decomposition") or {}),

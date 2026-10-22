@@ -138,10 +138,11 @@ TABS = (("overview", "Overview"), ("plumbing", "Plumbing"), ("moves", "Moves"),
 def _header(view: dict[str, Any], live: bool) -> str:
     through = view["data_through"]
     stamp = _day(through, year=False) if through else "no data"
+    alert = '<span class="palert" role="status">Inspect FRED.</span>' if view.get("inspect_fred") else ""
     return f'''<header class="site">
 <div class="phead"><a class="pbrand" href="./" aria-label="Treasury Flow Radar, overview">\
 <svg aria-hidden="true" width="15" height="18" viewBox="0 0 15 18"><rect x="0" y="12" width="15" height="6" fill="#22d3ee"/></svg>\
-<h1 class="pword">treasury flow radar</h1></a><span class="pstamp">data {stamp}</span></div>
+<h1 class="pword">treasury flow radar</h1></a><span class="pmeta"><span class="pstamp">data {stamp}</span>{alert}</span></div>
 <nav class="tabs" role="tablist" aria-label="Sections">{"".join(
         f'<a role="tab" href="#{key}" data-tab="{key}" id="tab-{key}" aria-controls="panel-{key}">{label}</a>'
         for key, label in TABS)}</nav>
@@ -934,6 +935,8 @@ main{max-width:46rem;margin:0 auto;padding:0 16px}
 .pbrand{display:flex;align-items:flex-end;gap:7px;text-decoration:none}
 .pword{margin:0;font:600 21px/1 var(--serif);letter-spacing:1.2px;text-transform:lowercase;color:var(--ink)}
 .pstamp{font:500 12px var(--mono);letter-spacing:1.5px;text-transform:uppercase;color:var(--ink-2);white-space:nowrap}
+.pmeta{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.palert{font:600 12px var(--mono);letter-spacing:.5px;color:var(--warn);white-space:nowrap}
 .tabs{display:flex;gap:2px;max-width:46rem;margin:0 auto;padding:0 8px;overflow-x:auto;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
 .tabs a{flex:0 0 auto;padding:10px 10px 9px;font:500 11px var(--mono);letter-spacing:2px;text-transform:uppercase;
