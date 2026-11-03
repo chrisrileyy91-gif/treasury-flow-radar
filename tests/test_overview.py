@@ -165,3 +165,14 @@ def test_for_you_lines_never_give_trade_instructions():
     banned = re.compile(r"\b(buy|sell now|should sell|should buy|reduce|trim|exit|hedge your|price target)\b", re.IGNORECASE)
     assert not [t for t in texts if banned.search(t)]
     assert fy.for_you(fy.FUNDING, "—") is None
+
+
+def test_page_links_home_screen_icon_and_export_ships_it(tmp_path):
+    from dashboard.export import ICONS, copy_icons
+    html = render_report(build_research_report([], start_date=date(2026, 10, 1), end_date=date(2026, 10, 1)))
+    assert '<link rel="apple-touch-icon" href="apple-touch-icon.png">' in html
+    assert '<meta name="apple-mobile-web-app-title" content="Flow Radar">' in html
+    copy_icons(tmp_path)
+    for name in ICONS:
+        data = (tmp_path / name).read_bytes()
+        assert data.startswith(b"\x89PNG") and len(data) > 200
