@@ -10,9 +10,11 @@ from dashboard.reporting import load_dashboard_report
 from treasury_flow_radar.run_health import fred_needs_inspection, load_ingest_report
 
 # Home-screen and tab icons the page links to by relative path (rendered from assets/icon.svg),
-# plus the web app manifest Android reads for its home-screen icon and name.
+# plus the web app manifest Android reads for its home-screen icon and name, and a pass-through
+# service worker (no caching) that Chrome wants before it offers Install.
 ICON_DIR = Path(__file__).resolve().parent / "assets"
-ICONS = ("apple-touch-icon.png", "favicon-32.png", "icon-192.png", "icon-512.png", "manifest.webmanifest")
+ICONS = ("apple-touch-icon.png", "favicon-32.png", "icon-192.png", "icon-512.png", "manifest.webmanifest",
+         "sw.js")
 
 
 def copy_icons(destination: Path) -> None:
