@@ -199,7 +199,8 @@ def synthesize(basis: Mapping[str, Any] | None) -> dict[str, Any]:
         tone, headline = "partial", "Partial read: some inputs are missing."
         stress = "Nothing measured here points to forced selling, but not every input is available."
     elif tight or elevated:
-        tone, headline = "watch", "Plumbing is mostly quiet, with one condition flashing."
+        flashing = " and ".join(x for x, on in (("funding is tight", tight), ("volatility is elevated", elevated)) if on)
+        tone, headline = "watch", f"Plumbing is mostly quiet, but {flashing}."
         stress = ("The position is not large, so funding or volatility stress has less to force out. "
                   "Nothing here points to forced selling yet.")
     else:

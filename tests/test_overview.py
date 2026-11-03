@@ -49,7 +49,23 @@ def test_crossed_line_is_counted_and_shaded():
     view["basis"]["crowding"]["aggregate"]["short_percentile"] = 91.0
     html = overview(view)
     assert "1 of 3 trip lines crossed" in html
-    assert 'class="g-over"' in html
+    assert 'class="g-band"' in html
+    assert 'class="gauge g-tripped" id="g-crowding"' in html
+    # crossed chip leads the strip and links to its gauge
+    assert html.index('trip trip-over" href="#g-crowding"') < html.index('href="#g-funding"')
+
+
+def test_crossed_reading_is_not_styled_as_the_band():
+    # g-over colours a crossed reading; only g-band may be absolutely positioned (else it
+    # pulls the reading out of its row and stretches it down the page).
+    view = _view()
+    view["basis"]["state"]["funding_tight"] = True
+    view["basis"]["funding"]["sofr_minus_iorb_median_bps"] = 3.0
+    html = overview(view)
+    assert '<span class="g-read g-over">+3 bp' in html
+    page = render_report(build_research_report([], start_date=date(2026, 10, 1), end_date=date(2026, 10, 1)))
+    assert not re.search(r"\.g-over\{[^}]*position", page)
+    assert re.search(r"\.g-band\{position:absolute", page)
 
 
 def test_missing_inputs_render_as_unknown_not_zero():

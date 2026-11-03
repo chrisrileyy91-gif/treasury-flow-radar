@@ -73,19 +73,23 @@ def sparkline(values: list[float], *, width: int = 300, height: int = 52, baseli
             f'<circle class="spark-end" cx="{end_x:.1f}" cy="{end_y:.1f}" r="3"/></svg>')
 
 
-def _gauge(*, name: str, reading: str, verdict: str, position: float | None, line: float, state: str,
+def _gauge(*, key: str, name: str, reading: str, verdict: str, position: float | None, line: float, state: str,
            left: str, right: str, line_label: str, points: list[str], so_what: str) -> str:
-    """One trip-line track: reading as a dot, the rule's line as a brass mark, then what it means."""
+    """One trip-line track: reading as a dot, the rule's line as a brass mark, then what it means.
+
+    `g-band` is the shaded stretch past the line; `g-over` is only the crossed state's colour class.
+    Keep them separate: the band is absolutely positioned and must never style a reading."""
     if position is None:
         track = '<div class="g-track g-empty"></div>'
     else:
         pos = min(max(position, 0.0), 1.0) * 100
-        over = (f'<span class="g-over" style="left:{line * 100:.1f}%;width:{max(pos - line * 100, 0):.1f}%"></span>'
+        over = (f'<span class="g-band" style="left:{line * 100:.1f}%;width:{max(pos - line * 100, 0):.1f}%"></span>'
                 if state == "over" else "")
         track = (f'<div class="g-track">{over}<span class="g-line" style="left:{line * 100:.1f}%"></span>'
                  f'<span class="g-dot g-{state}" style="left:{pos:.1f}%"></span></div>')
     facts = "".join(f"<li>{p}</li>" for p in points)
-    return (f'<div class="gauge"><div class="g-head"><span class="g-name">{escape(name)}</span>'
+    tripped = " g-tripped" if state == "over" else ""
+    return (f'<div class="gauge{tripped}" id="g-{key}"><div class="g-head"><span class="g-name">{escape(name)}</span>'
             f'<span class="g-read g-{state}">{escape(reading)}<span class="g-verdict">{escape(verdict)}</span></span></div>{track}'
             f'<div class="g-scale"><span>{escape(left)}</span><span class="g-mid">{escape(line_label)}</span>'
             f'<span>{escape(right)}</span></div><ul class="g-facts">{facts}</ul>'
@@ -209,7 +213,7 @@ def _instrument(view: dict[str, Any]) -> str:
     c_verdict, c_points, c_so = (("—", ["Not enough stored weeks to rank the position."], "")
                                  if agg is None else crowding_context(agg, bool(state.get("crowded"))))
     crowd = _gauge(
-        name="Crowding", reading="—" if pct is None else f"{_ordinal(pct)} pct", verdict=c_verdict,
+        key="crowding", name="Crowding", reading="—" if pct is None else f"{_ordinal(pct)} pct", verdict=c_verdict,
         position=None if pct is None else pct / 100, line=0.8,
         state=_percentile_state(pct, state.get("crowded")), left="smaller short", right="record",
         line_label="crowded at 80th", points=c_points, so_what=c_so)
@@ -219,7 +223,7 @@ def _instrument(view: dict[str, Any]) -> str:
     f_verdict, f_points, f_so = (("—", ["No SOFR or IORB observations stored."], "")
                                  if median is None else funding_context(funding, bool(state.get("funding_tight"))))
     fund = _gauge(
-        name="Funding", reading="—" if median is None else _signed(median, 0, " bp"), verdict=f_verdict,
+        key="funding", name="Funding", reading="—" if median is None else _signed(median, 0, " bp"), verdict=f_verdict,
         position=None if median is None else (median + FUNDING_SCALE_BPS) / (2 * FUNDING_SCALE_BPS), line=0.5,
         state=f_state, left=f"{MINUS}{FUNDING_SCALE_BPS:.0f} bp", right=f"+{FUNDING_SCALE_BPS:.0f} bp",
         line_label="tight above 0", points=f_points, so_what=f_so)
@@ -227,10 +231,17 @@ def _instrument(view: dict[str, Any]) -> str:
     v_verdict, v_points, v_so = (("—", ["Not enough 10-year history to measure."], "")
                                  if vol is None else volatility_context(vol, bool(state.get("vol_elevated"))))
     vola = _gauge(
-        name="Volatility", reading="—" if vpct is None else f"{_ordinal(vpct)} pct", verdict=v_verdict,
+        key="volatility", name="Volatility", reading="—" if vpct is None else f"{_ordinal(vpct)} pct", verdict=v_verdict,
         position=None if vpct is None else vpct / 100, line=0.8,
         state=_percentile_state(vpct, state.get("vol_elevated")), left="calm", right="extreme",
         line_label="elevated at 80th", points=v_points, so_what=v_so)
+    trips = _trip_strip([
+        ("crowding", "Crowding", "—" if pct is None else f"{_ordinal(pct)} pct",
+         _percentile_state(pct, state.get("crowded"))),
+        ("funding", "Funding", "—" if median is None else _signed(median, 0, " bp"), f_state),
+        ("volatility", "Volatility", "—" if vpct is None else f"{_ordinal(vpct)} pct",
+         _percentile_state(vpct, state.get("vol_elevated"))),
+    ])
     lines = syn.get("lines") or []
     conclusion = escape(lines[-1]["text"]) if lines else ""
     as_of = syn.get("as_of") or {}
@@ -241,6 +252,7 @@ def _instrument(view: dict[str, Any]) -> str:
 <p class="ov-headline"><span id="ov-state" class="ov-state t-{escape(tone)}">{word}</span>
 <span class="ov-count">{tripped} of 3 trip lines crossed</span></p>
 <p class="ov-read">{escape(str(syn.get("headline") or ""))}</p>
+{trips}
 <div class="card instrument">
 <div class="cap-row"><span class="cap brass">Basis-trade setup</span><span class="cap-meta">{escape(stamp)}</span></div>
 {crowd}{fund}{vola}
@@ -248,6 +260,19 @@ def _instrument(view: dict[str, Any]) -> str:
 <a class="go" href="#plumbing" data-tab="plumbing">Full read and charts</a>
 </div>
 </section>'''
+
+
+TRIP_WORDS = {"over": "crossed", "near": "near line", "clear": "clear", "unknown": "no data"}
+
+
+def _trip_strip(items: list[tuple[str, str, str, str]]) -> str:
+    """One chip per trip line, crossed ones first and in red, each jumping to its gauge."""
+    order = {"over": 0, "near": 1, "clear": 2, "unknown": 3}
+    chips = "".join(
+        f'<a class="trip trip-{state}" href="#g-{key}"><span class="trip-n">{escape(name)}</span>'
+        f'<span class="trip-v">{escape(reading)}</span><span class="trip-s">{TRIP_WORDS[state]}</span></a>'
+        for key, name, reading, state in sorted(items, key=lambda i: order[i[3]]))
+    return f'<nav class="trips" aria-label="Trip lines">{chips}</nav>'
 
 
 def _ten_year(view: dict[str, Any]) -> str:
