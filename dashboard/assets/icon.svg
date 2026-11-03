@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
+  <!-- Treasury Flow Radar home-screen icon (option D, monogram). Full-bleed square: iOS and
+       Android round the corners themselves. Text is JetBrains Mono 600 (dashboard/fonts). -->
+  <rect width="180" height="180" fill="#0a0a0f"/>
+  <rect x="38" y="56" width="34" height="10" rx="2" fill="#22d3ee"/>
+  <text x="36" y="118" font-family="'JetBrains Mono', monospace" font-weight="600" font-size="50" letter-spacing="2" fill="#f0ece4">TFR</text>
+  <rect x="38" y="134" width="104" height="3" rx="1.5" fill="#c9a54e" fill-opacity="0.75"/>
+</svg>
