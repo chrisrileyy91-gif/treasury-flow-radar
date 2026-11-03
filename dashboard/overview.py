@@ -12,7 +12,19 @@ from datetime import date
 from html import escape
 from typing import Any
 
-from dashboard.for_you import CROWDING, DISCLAIMER, FUNDING, OVERALL, VOLATILITY, for_you
+from dashboard.for_you import (
+    CROWDING,
+    DISCLAIMER,
+    FUNDING,
+    OVERALL,
+    VOLATILITY,
+    dealer_you,
+    drivers_you,
+    for_you,
+    level_you,
+    supply_you,
+    you_html,
+)
 from treasury_flow_radar.analytics.plumbing_synthesis import funding_thinning
 
 MINUS = "−"
@@ -100,13 +112,7 @@ def _gauge(*, key: str, name: str, reading: str, verdict: str, position: float |
 
 
 def _you_html(you: tuple[str, dict[str, str]] | None) -> str:
-    """The "What this means for you" box: one plain sentence, then a line per sector if flashing."""
-    if not you:
-        return ""
-    plain, sectors = you
-    rows = "".join(f'<li><span class="g-you-s">{escape(k)}</span>{escape(v)}</li>' for k, v in sectors.items())
-    return (f'<div class="g-you"><span class="g-you-l">What this means for you</span><p>{escape(plain)}</p>'
-            + (f'<ul>{rows}</ul>' if rows else "") + '</div>')
+    return you_html(you)
 
 
 def _m(value: float) -> str:
@@ -314,6 +320,7 @@ def _ten_year(view: dict[str, Any]) -> str:
 {sparkline(points, label=f"10-year yield, last {len(points)} sessions")}
 <div class="mats" aria-label="Yields and 5-session change, basis points">{cells}</div>
 <p class="small">{escape(str(view.get("curve_read") or ""))}</p>{stale_note}
+{you_html(level_you(level, ten.get("d5")))}
 <a class="go" href="#moves" data-tab="moves">Curve and large moves</a>
 </section>'''
 
@@ -334,6 +341,7 @@ def _drivers(view: dict[str, Any]) -> str:
 <div class="cap-row"><span class="cap cyan">What moved it</span><span class="cap-meta">{escape(meta)}</span></div>
 <p class="ov-body">Share of the 10-year's {cand.get("total_bps") or 0:.0f} bp of daily moves that each candidate's pattern fits.</p>
 <div class="drvs">{rows}</div>
+{you_html(drivers_you(cand))}
 <a class="go" href="#moves" data-tab="moves">Why, checks and calibration</a>
 </section>'''
 
@@ -360,6 +368,7 @@ def _positioning(view: dict[str, Any]) -> str:
     return f'''<section class="ov-block card">
 <div class="cap-row"><span class="cap cyan">Positioning</span><span class="cap-meta">weekly</span></div>
 <div class="pos-grid">{"".join(parts)}</div>
+{you_html(dealer_you(dealer))}
 <a class="go" href="#positioning" data-tab="positioning">Dealers and futures by group</a>
 </section>'''
 
@@ -384,6 +393,7 @@ def _supply(view: dict[str, Any]) -> str:
     return f'''<section class="ov-block card">
 <div class="cap-row"><span class="cap cyan">Treasury supply</span><span class="cap-meta">coupon auctions</span></div>
 <div class="aucs">{"".join(items)}</div>
+{you_html(supply_you(auctions, view.get("generated_at")))}
 <a class="go" href="#supply" data-tab="supply">All recent auctions</a>
 </section>'''
 

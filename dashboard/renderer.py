@@ -15,7 +15,23 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
-from dashboard.overview import overview
+from dashboard.for_you import (
+    CROWDING,
+    FUNDING,
+    VOLATILITY,
+    channel_you,
+    dealer_you,
+    drivers_you,
+    events_you,
+    for_you,
+    futures_you,
+    level_you,
+    market_you,
+    read_you,
+    supply_you,
+    you_html,
+)
+from dashboard.overview import crowding_context, funding_context, overview, volatility_context
 from dashboard.presentation import CFTC_GROUPS, MATURITIES, build_dashboard_view
 
 MINUS = "−"
@@ -183,6 +199,7 @@ def _happening(view: dict[str, Any]) -> str:
 <h2 id="h-happening">What is happening?</h2>
 {_level(view.get("level"))}
 {lead}
+{you_html(level_you(view.get("level"), next((r.get("d5") for r in curve["rows"] if r.get("series") == "DGS10"), None)))}
 {_candidate_block(view)}
 {_market_block(view.get("market_context") or {})}
 {_x_block(view.get("x_take"))}
@@ -289,6 +306,7 @@ credit spreads, bp (wider = more worried). USD = Fed broad dollar index, %. An a
 marks a move bigger than that market's usual day ({typical}).{lag_note} {_tag("Observation")}</p>
 <div class="table-wrap"><table><thead><tr>{head_html}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>
 <ul class="limits">{"".join(reads)}</ul>
+{you_html(market_you(ctx))}
 <p class="small">A pattern here is consistent with a story (for example a flight to safety), not evidence of who traded or why.
 Source: FRED (S&amp;P Dow Jones Indices, ICE Data Indices, Federal Reserve H.10).</p>'''
 
@@ -415,6 +433,7 @@ def _candidate_block(view: dict[str, Any]) -> str:
     return f'''<h2 class="sub-q" id="h-candidates">What could explain it?</h2>
 <p class="small">Sessions {escape(span)}. Each candidate is credited with the part of each day's 10-year move that its mechanism fits; the rest is unexplained. Corporate deals are checked against the rate-lock pattern: yields rise before pricing, led by the long end, and the long end reverses after.</p>
 {verdict}
+{you_html(drivers_you(cand))}
 {"".join(items)}
 {_calibration_table(cand)}
 <details class="more"><summary>The formula and its assumptions</summary><ul class="limits">{"".join(f"<li>{escape(x)}</li>" for x in cand.get("assumptions") or [])}<li>Each session's absolute 10-year move is split across the candidates active that day in proportion to prior × fit; whatever their weights do not cover is unexplained.</li></ul></details>
@@ -451,6 +470,7 @@ def _channel(channel: dict[str, Any]) -> str:
     caption = f"Basis points, through {_day(end, year=False) if end else 'latest session'}. Real yield and breakeven are FRED market measures; any gap between them and the nominal change is shown, not assumed away."
     return f'''<h2 class="sub-q" id="h-channel">Through which channel?</h2>
 {lead}
+{you_html(channel_you(channel))}
 {_table([("Component", "l"), ("1 day", "r"), ("5 days", "r")], rows, caption=caption)}
 {curve_line}
 {tp_line}
@@ -475,6 +495,7 @@ def _dealers(view: dict[str, Any]) -> str:
     return f'''<section id="dealers" aria-labelledby="h-dealers">
 <h2 id="h-dealers">Dealer positioning</h2>
 {body}
+{you_html(dealer_you(dealer))}
 <p class="note">This is the aggregate of all primary dealers (long minus short, excluding TIPS), reported weekly by the New York Fed. Dealers hold inventory to make markets for customers, so a large position is a measure of balance-sheet use, not a directional bet.</p>
 <p class="source">Source: NY Fed Primary Dealer Statistics, series PDPOSGST-TOT. Exact publication time is not supplied.</p>
 </section>'''
@@ -519,12 +540,19 @@ def _futures(view: dict[str, Any]) -> str:
 <h2 id="h-futures">Futures positioning</h2>
 <p class="lead-sm">Net futures contracts by trader group.{date_line} {_tag("Fact")} {_tag("Calculation")}</p>
 <p class="small">In each cell the large number is the group's net position (contracts long minus short; a minus sign means net short). The small "wk" number underneath is how much that net position changed from the prior week. Contract counts are not comparable across rows: a 2-year contract carries far less rate risk than a Bond contract.</p>
+{you_html(futures_you(_crowding_verdict(view)))}
 {_moves(view.get("positioning_moves") or {})}
 {_table(headers, rows, caption="Net contracts, with weekly change underneath. Asset mgrs = asset managers; Lev. funds = leveraged funds. Spreading positions are kept separate and not included in net.")}
 {_cftc_details(cftc)}
 <p class="note">These are positioning observations, not predictions. Dealers are often net short futures while holding cash Treasuries, and asset managers' long futures commonly reflect duration exposure. A group being long or short does not by itself say where yields will go.</p>
 <p class="source">Source: CFTC Traders in Financial Futures, futures only. Positions as of Tuesday, usually released Friday.</p>
 </section>'''
+
+
+def _crowding_verdict(view: dict[str, Any]) -> str:
+    basis = view.get("basis") or {}
+    agg = (basis.get("crowding") or {}).get("aggregate")
+    return "" if agg is None else crowding_context(agg, bool((basis.get("state") or {}).get("crowded")))[0]
 
 
 def _ord(value: Any) -> _Html | str:
@@ -602,12 +630,15 @@ def _basis(view: dict[str, Any]) -> str:
 <figure class="chart" data-chart="basis" aria-label="Leveraged-fund net position in 10-year-note equivalents, weekly">
 <figcaption>Leveraged-fund net, 10-year-note equivalents (all five contracts, DV01-weighted)</figcaption><div class="plot"></div></figure>
 {table}
+{you_html(None if agg is None else for_you(CROWDING, crowding_context(agg, bool(state.get("crowded")))[0]))}
 <h3 class="sub">Funding</h3>
 <p class="lead-sm">{fund}</p>
 {"" if funding is None else f'''<figure class="chart" data-chart="funding" aria-label="SOFR minus IORB, daily">
 <figcaption>SOFR minus IORB, basis points, last {len(funding.get("history") or [])} sessions</figcaption><div class="plot"></div></figure>'''}
+{you_html(None if funding is None else for_you(FUNDING, funding_context(funding, bool(state.get("funding_tight")))[0]))}
 <h3 class="sub">Rate volatility</h3>
 <p class="lead-sm">{volt}</p>
+{you_html(None if vol is None else for_you(VOLATILITY, volatility_context(vol, bool(state.get("vol_elevated")))[0]))}
 <details class="more"><summary>Rules, method, and limits</summary>
 <ul class="limits"><li>Crowded: {_text(rules.get("crowded", ""))}.</li><li>Funding tightening: {_text(rules.get("funding_tight", ""))}.</li>
 <li>Volatility elevated: {_text(rules.get("vol_elevated", ""))}.</li>
@@ -641,6 +672,7 @@ def _synthesis(view: dict[str, Any]) -> str:
 <div class="synth">{item(syn["fed"])}</div>
 <h3 class="sub">What it means for stocks</h3>
 <div class="synth">{item(syn["equities"])}</div>
+{you_html(read_you(syn.get("tone")))}
 {f'<h3 class="sub">What would change this read</h3><ul class="limits">{watch}</ul>' if watch else ""}
 <p class="small">{_text(syn.get("limit", ""))} Data as of {dates}.</p>
 </section>'''
@@ -667,6 +699,7 @@ def _supply(view: dict[str, Any]) -> str:
     return f'''<section id="supply" aria-labelledby="h-supply">
 <h2 id="h-supply">Treasury supply</h2>
 <p class="lead-sm">Most recent coupon auctions (2- to 30-year notes and bonds). {_tag("Fact")}</p>
+{you_html(supply_you(view["auctions"], view.get("generated_at")))}
 {_table([("Date", "l"), ("Security", "l"), ("Size", "r"), ("Cover", "r"), ("Yield", "r")], rows,
         caption="Size is the amount offered. Cover is the bid-to-cover ratio. Yield is the auction high yield.")}
 <p class="source">Source: U.S. Treasury Fiscal Data auctions dataset. Bills, TIPS, and floating-rate notes are not included.</p>
@@ -781,6 +814,7 @@ def _events(view: dict[str, Any]) -> str:
     return f'''<section id="moves" aria-labelledby="h-moves">
 <h2 id="h-moves">Large 10-year moves</h2>
 <p class="lead-sm">Sessions where the 10-year yield moved {rule} from the previous session. Showing the most recent {shown} of {view["event_count"]} detected events. Open one to see the curve around it. {_tag("Observation")}</p>
+{you_html(events_you(threshold))}
 {body}
 <p class="note">Timing alone does not establish cause. Weekly dealer and CFTC data are matched to the latest report on or before each date and are never filled forward.</p>
 </section>'''
