@@ -12,6 +12,7 @@ from datetime import date
 from html import escape
 from typing import Any
 
+from dashboard.for_you import CROWDING, DISCLAIMER, FUNDING, OVERALL, VOLATILITY, for_you
 from treasury_flow_radar.analytics.plumbing_synthesis import funding_thinning
 
 MINUS = "−"
@@ -74,7 +75,7 @@ def sparkline(values: list[float], *, width: int = 300, height: int = 52, baseli
 
 
 def _gauge(*, key: str, name: str, reading: str, verdict: str, position: float | None, line: float, state: str,
-           left: str, right: str, line_label: str, points: list[str], so_what: str) -> str:
+           left: str, right: str, line_label: str, points: list[str], so_what: str, you: tuple[str, dict[str, str]] | None = None) -> str:
     """One trip-line track: reading as a dot, the rule's line as a brass mark, then what it means.
 
     `g-band` is the shaded stretch past the line; `g-over` is only the crossed state's colour class.
@@ -93,7 +94,19 @@ def _gauge(*, key: str, name: str, reading: str, verdict: str, position: float |
             f'<span class="g-read g-{state}">{escape(reading)}<span class="g-verdict">{escape(verdict)}</span></span></div>{track}'
             f'<div class="g-scale"><span>{escape(left)}</span><span class="g-mid">{escape(line_label)}</span>'
             f'<span>{escape(right)}</span></div><ul class="g-facts">{facts}</ul>'
-            + (f'<p class="g-so"><span class="g-so-l">So what</span>{so_what}</p>' if so_what else "") + '</div>')
+            + (f'<p class="g-so"><span class="g-so-l">So what</span>{so_what}</p>' if so_what else "")
+            + _you_html(you)
+            + '</div>')
+
+
+def _you_html(you: tuple[str, dict[str, str]] | None) -> str:
+    """The "What this means for you" box: one plain sentence, then a line per sector if flashing."""
+    if not you:
+        return ""
+    plain, sectors = you
+    rows = "".join(f'<li><span class="g-you-s">{escape(k)}</span>{escape(v)}</li>' for k, v in sectors.items())
+    return (f'<div class="g-you"><span class="g-you-l">What this means for you</span><p>{escape(plain)}</p>'
+            + (f'<ul>{rows}</ul>' if rows else "") + '</div>')
 
 
 def _m(value: float) -> str:
@@ -216,7 +229,8 @@ def _instrument(view: dict[str, Any]) -> str:
         key="crowding", name="Crowding", reading="—" if pct is None else f"{_ordinal(pct)} pct", verdict=c_verdict,
         position=None if pct is None else pct / 100, line=0.8,
         state=_percentile_state(pct, state.get("crowded")), left="smaller short", right="record",
-        line_label="crowded at 80th", points=c_points, so_what=c_so)
+        line_label="crowded at 80th", points=c_points, so_what=c_so,
+        you=for_you(CROWDING, c_verdict))
     median = None if funding is None else funding.get("sofr_minus_iorb_median_bps")
     f_state = ("unknown" if median is None else "over" if state.get("funding_tight") else
                "near" if median >= -NEAR_FUNDING_BPS else "clear")
@@ -226,7 +240,8 @@ def _instrument(view: dict[str, Any]) -> str:
         key="funding", name="Funding", reading="—" if median is None else _signed(median, 0, " bp"), verdict=f_verdict,
         position=None if median is None else (median + FUNDING_SCALE_BPS) / (2 * FUNDING_SCALE_BPS), line=0.5,
         state=f_state, left=f"{MINUS}{FUNDING_SCALE_BPS:.0f} bp", right=f"+{FUNDING_SCALE_BPS:.0f} bp",
-        line_label="tight above 0", points=f_points, so_what=f_so)
+        line_label="tight above 0", points=f_points, so_what=f_so,
+        you=for_you(FUNDING, f_verdict))
     vpct = None if vol is None else vol.get("realized_vol_percentile")
     v_verdict, v_points, v_so = (("—", ["Not enough 10-year history to measure."], "")
                                  if vol is None else volatility_context(vol, bool(state.get("vol_elevated"))))
@@ -234,7 +249,8 @@ def _instrument(view: dict[str, Any]) -> str:
         key="volatility", name="Volatility", reading="—" if vpct is None else f"{_ordinal(vpct)} pct", verdict=v_verdict,
         position=None if vpct is None else vpct / 100, line=0.8,
         state=_percentile_state(vpct, state.get("vol_elevated")), left="calm", right="extreme",
-        line_label="elevated at 80th", points=v_points, so_what=v_so)
+        line_label="elevated at 80th", points=v_points, so_what=v_so,
+        you=for_you(VOLATILITY, v_verdict))
     trips = _trip_strip([
         ("crowding", "Crowding", "—" if pct is None else f"{_ordinal(pct)} pct",
          _percentile_state(pct, state.get("crowded"))),
@@ -242,6 +258,8 @@ def _instrument(view: dict[str, Any]) -> str:
         ("volatility", "Volatility", "—" if vpct is None else f"{_ordinal(vpct)} pct",
          _percentile_state(vpct, state.get("vol_elevated"))),
     ])
+    overall = (f'<p class="ov-you">{escape(OVERALL[tone])}<span class="ov-you-note">{escape(DISCLAIMER)}</span></p>'
+               if tone in OVERALL else "")
     lines = syn.get("lines") or []
     conclusion = escape(lines[-1]["text"]) if lines else ""
     as_of = syn.get("as_of") or {}
@@ -257,6 +275,7 @@ def _instrument(view: dict[str, Any]) -> str:
 <div class="cap-row"><span class="cap brass">Basis-trade setup</span><span class="cap-meta">{escape(stamp)}</span></div>
 {crowd}{fund}{vola}
 <p class="ov-conclusion">{conclusion}</p>
+{overall}
 <a class="go" href="#plumbing" data-tab="plumbing">Full read and charts</a>
 </div>
 </section>'''

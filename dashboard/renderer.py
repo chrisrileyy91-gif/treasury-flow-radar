@@ -991,6 +991,14 @@ font:500 12px var(--mono);color:var(--ink-3);text-decoration:none}
 .g-facts b{color:var(--ink);font-weight:600}
 .g-so{margin:8px 0 0;padding:8px 10px;background:var(--elev);border-radius:8px;font-size:14px;line-height:1.5}
 .g-so-l{display:block;margin-bottom:2px;font:500 10px var(--mono);letter-spacing:2px;text-transform:uppercase;color:var(--brass)}
+.g-you{margin:8px 0 0;padding:8px 10px;border:1px solid rgba(34,211,238,.3);border-radius:8px;font-size:14px;line-height:1.5;color:var(--ink)}
+.g-you-l{display:block;margin-bottom:2px;font:500 10px var(--mono);letter-spacing:2px;text-transform:uppercase;color:var(--cyan)}
+.g-you p{margin:0}
+.g-you ul{list-style:none;margin:6px 0 0;padding:0}
+.g-you li{padding:3px 0;color:var(--ink-2)}
+.g-you-s{display:block;font:600 11px var(--mono);letter-spacing:.5px;color:var(--ink)}
+.ov-you{margin:10px 0 0;font-size:15px;color:var(--ink)}
+.ov-you-note{display:block;margin-top:4px;font-size:12px;color:var(--ink-3)}
 .ov-conclusion{margin:12px 0 0;padding-top:12px;border-top:1px solid var(--rule-2);font-size:15px}
 .ov-body{margin:0 0 10px;font-size:14px;color:var(--ink-2)}
 .ov-empty{color:var(--ink-2)}

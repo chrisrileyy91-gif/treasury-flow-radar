@@ -142,3 +142,26 @@ def test_volatility_context_states_distance_to_the_line():
                                              "history_sessions": 5080}, elevated=False)
     assert verdict == "ordinary"
     assert "5.4 bp on a typical day" in points[0] and "about 20 years" in points[1] and "24% more movement" in points[1]
+
+
+def test_each_gauge_says_what_it_means_for_the_readers_sectors():
+    view = _view()
+    view["basis"]["state"]["funding_tight"] = True
+    view["basis"]["funding"]["sofr_minus_iorb_median_bps"] = 3.0
+    view["synthesis"]["tone"] = "watch"
+    html = overview(view)
+    assert html.count('class="g-you"') == 3
+    assert "What this means for you" in html
+    assert "Borrowing cash against Treasuries now costs more" in html      # funding: tight
+    assert html.count('class="g-you-s"') == 3                              # sector lines only when flashing
+    assert "nothing is forcing" in html                                    # crowding: large (79th)
+    assert "not a buy or sell signal" in html
+
+
+def test_for_you_lines_never_give_trade_instructions():
+    from dashboard import for_you as fy
+    entries = [*fy.FUNDING.values(), *fy.CROWDING.values(), *fy.VOLATILITY.values()]
+    texts = [*fy.OVERALL.values(), *(e[0] for e in entries), *(v for e in entries for v in e[1].values())]
+    banned = re.compile(r"\b(buy|sell now|should sell|should buy|reduce|trim|exit|hedge your|price target)\b", re.IGNORECASE)
+    assert not [t for t in texts if banned.search(t)]
+    assert fy.for_you(fy.FUNDING, "—") is None
