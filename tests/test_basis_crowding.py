@@ -208,6 +208,14 @@ def test_crowded_and_tight_synthesis_names_streak_and_mechanism():
     assert not any("growing past" in w for w in syn["watch"])
 
 
+def test_single_flashing_condition_is_named_in_the_headline():
+    from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
+    rows = _with_vol(_with_funding(_history(60, 90_000.0), 4.43))
+    syn = synthesize(basis_setup(rows))
+    assert syn["tone"] == "watch"
+    assert syn["headline"] == "Plumbing is mostly quiet, but funding is tight."
+
+
 def test_missing_funding_does_not_claim_calm():
     from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
     syn = synthesize(basis_setup(_history(60, 90_000.0)))

@@ -961,6 +961,16 @@ color:var(--ink-3);text-decoration:none;border-bottom:2px solid transparent}
 .cap.brass{color:var(--brass)}.cap.cyan{color:var(--cyan)}.cap.dim{color:var(--ink-3)}
 .cap-meta{font:12px var(--mono);color:var(--ink-3);text-align:right}
 .gauge{padding:12px 0 10px;border-top:1px solid var(--rule-2)}
+.gauge{scroll-margin-top:96px}
+.gauge.g-tripped{margin:0 -16px;padding-left:13px;padding-right:16px;border-left:3px solid var(--neg);background:rgba(207,92,92,.07)}
+.trips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.trip{display:inline-flex;align-items:baseline;gap:7px;padding:5px 10px;border:1px solid var(--rule-2);border-radius:999px;
+font:500 12px var(--mono);color:var(--ink-3);text-decoration:none}
+.trip-n{color:var(--ink-2)}.trip-v{color:var(--ink)}
+.trip-s{font-size:10px;letter-spacing:1.5px;text-transform:uppercase}
+.trip-over{border-color:var(--neg);background:rgba(207,92,92,.16)}.trip-over .trip-n,.trip-over .trip-v,.trip-over .trip-s{color:var(--neg)}
+.trip-over .trip-s{font-weight:700}
+.trip-near{border-color:rgba(232,168,56,.5)}.trip-near .trip-s{color:var(--warn)}
 .gauge:first-of-type{border-top:0;padding-top:2px}
 .g-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
 .g-name{font-size:16px;font-weight:500}
@@ -969,7 +979,7 @@ color:var(--ink-3);text-decoration:none;border-bottom:2px solid transparent}
 .g-track{position:relative;height:6px;background:var(--elev);border-radius:3px;margin:0 6px}
 .g-track.g-empty{background:repeating-linear-gradient(135deg,var(--hatch) 0 2px,transparent 2px 6px)}
 .g-line{position:absolute;top:-6px;bottom:-6px;width:2px;margin-left:-1px;background:var(--brass);border-radius:1px}
-.g-over{position:absolute;top:0;bottom:0;background:rgba(207,92,92,.35);border-radius:3px}
+.g-band{position:absolute;top:0;bottom:0;background:rgba(207,92,92,.35);border-radius:3px}
 .g-dot{position:absolute;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid var(--surface);background:var(--ink)}
 .g-dot.g-near{background:var(--warn)}.g-dot.g-over{background:var(--neg)}
 .g-scale{display:flex;justify-content:space-between;gap:8px;margin-top:8px;font:11px var(--mono);color:var(--ink-3)}
