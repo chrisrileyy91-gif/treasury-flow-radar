@@ -1193,6 +1193,7 @@ footer{font-size:12px;color:var(--ink-3);padding:20px 0 40px}
 """
 
 JS = r"""
+if('serviceWorker' in navigator&&location.protocol==='https:'){try{navigator.serviceWorker.register('sw.js').catch(function(){});}catch(e){}}
 (function(){
 var tabs=[].slice.call(document.querySelectorAll('.tabs [role="tab"]')),panels=[].slice.call(document.querySelectorAll('.panel'));
 if(!tabs.length)return;var keys=tabs.map(function(t){return t.dataset.tab;});

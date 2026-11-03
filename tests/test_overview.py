@@ -182,3 +182,6 @@ def test_page_links_home_screen_icon_and_export_ships_it(tmp_path):
     assert manifest["short_name"] == "Flow Radar"
     assert {"maskable"} <= {i["purpose"] for i in manifest["icons"]}
     assert all((tmp_path / i["src"]).exists() for i in manifest["icons"])
+    sw = (tmp_path / "sw.js").read_text(encoding="utf-8")
+    assert "respondWith(fetch(event.request))" in sw and "caches." not in sw   # pass-through: no Cache API use, never stale
+    assert "serviceWorker.register('sw.js')" in html
