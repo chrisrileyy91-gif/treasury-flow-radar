@@ -919,6 +919,7 @@ def render_report(report: dict[str, Any], *, user_event: dict[str, Any] | None =
             '<link rel="apple-touch-icon" href="apple-touch-icon.png">'
             '<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">'
             '<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">'
+            '<link rel="manifest" href="manifest.webmanifest">'
             '<title>Treasury Flow Radar</title>'
             f'<style>{font_faces()}{CSS}</style></head><body>{body}'
             f'<script type="application/json" id="chart-data">{payload}</script>'

@@ -172,7 +172,13 @@ def test_page_links_home_screen_icon_and_export_ships_it(tmp_path):
     html = render_report(build_research_report([], start_date=date(2026, 10, 1), end_date=date(2026, 10, 1)))
     assert '<link rel="apple-touch-icon" href="apple-touch-icon.png">' in html
     assert '<meta name="apple-mobile-web-app-title" content="Flow Radar">' in html
+    assert '<link rel="manifest" href="manifest.webmanifest">' in html
     copy_icons(tmp_path)
-    for name in ICONS:
+    for name in (n for n in ICONS if n.endswith(".png")):
         data = (tmp_path / name).read_bytes()
         assert data.startswith(b"\x89PNG") and len(data) > 200
+    import json
+    manifest = json.loads((tmp_path / "manifest.webmanifest").read_text(encoding="utf-8"))
+    assert manifest["short_name"] == "Flow Radar"
+    assert {"maskable"} <= {i["purpose"] for i in manifest["icons"]}
+    assert all((tmp_path / i["src"]).exists() for i in manifest["icons"])
