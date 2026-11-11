@@ -1,0 +1,40 @@
+# Throwaway probe: prints the layout of Damodaran's monthly implied ERP workbook. Delete after use.
+name: Probe ERP workbook
+on:
+  push:
+    branches: [probe/erp-layout]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Download and describe
+        run: |
+          curl -sSL -o erp.xlsx -w "HTTP %{http_code} %{content_type} %{size_download} bytes\n" \
+            https://pages.stern.nyu.edu/~adamodar/pc/implprem/ERPbymonth.xlsx
+          python - <<'PY'
+          import zipfile, re, xml.etree.ElementTree as ET
+          ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+          z = zipfile.ZipFile("erp.xlsx")
+          wb = ET.fromstring(z.read("xl/workbook.xml"))
+          print("sheets:", [(s.get("name"), s.get("sheetId")) for s in wb.find("m:sheets", ns)])
+          shared = []
+          if "xl/sharedStrings.xml" in z.namelist():
+              for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", ns):
+                  shared.append("".join(t.text or "" for t in si.iter("{%s}t" % ns["m"])))
+          for name in sorted(n for n in z.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml$", n)):
+              rows = ET.fromstring(z.read(name)).find("m:sheetData", ns).findall("m:row", ns)
+              print(f"== {name}: {len(rows)} rows")
+              for r in rows[:12] + rows[-4:]:
+                  cells = []
+                  for c in r.findall("m:c", ns):
+                      v = c.find("m:v", ns); f = c.find("m:f", ns)
+                      val = None if v is None else (shared[int(v.text)] if c.get("t") == "s" else v.text)
+                      cells.append(f'{c.get("r")}={val!r}' + (" (formula)" if f is not None else ""))
+                  print("  ", r.get("r"), " | ".join(cells)[:400])
+          PY
