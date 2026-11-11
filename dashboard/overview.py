@@ -533,6 +533,63 @@ def stock_risk_lines(risk: dict[str, Any]) -> list[str]:
     return lines
 
 
+STATE_NAMES = {"quiet": "Quiet on both sides", "early_warning": "Warning light, calm stocks",
+               "unpriced_stress": "Pipes stressed, calm stocks", "fear_elsewhere": "Nervous stocks, calm pipes",
+               "together": "Stressed together"}
+
+
+def _long_date(value: str) -> str:
+    return f"{_date(value)}, {date.fromisoformat(value).year}"
+
+
+def state_history_line(risk: dict[str, Any]) -> str | None:
+    """How the current combination has played out in the stored data (descriptive, not a forecast)."""
+    history = risk.get("history")
+    state = risk.get("state")
+    if not history or state not in (history.get("states") or {}):
+        return None
+    row, quiet = history["states"][state], history["states"]["quiet"]
+    since, h = _long_date(history["start"]), history["horizon_sessions"]
+    if not row["days"]:
+        return (f"<b>How this has played out</b>: this combination hasn't occurred since {since} in the stored "
+                "data, so what tends to follow it is untested here.")
+    caveat = (f"Only {row['episodes']} separate stretches, so this is history, not a pattern."
+              if row["episodes"] < 10 else "One period of history, not a forecast.")
+    if state == "quiet":
+        return (f"<b>How this has played out</b>: since {since}, quiet days ({row['days']} across {row['episodes']} "
+                f"stretches) were followed by {_signed(row['mean_forward_pct'], 2, '%')} on average for the S&amp;P 500 "
+                f"over the next {h} sessions, up {row['share_up_pct']:.0f}% of the time. {caveat}")
+    versus = ("" if not quiet["days"] else
+              f", against {_signed(quiet['mean_forward_pct'], 2, '%')} after quiet days")
+    return (f"<b>How this has played out</b>: since {since}, this combination showed up on {row['days']} trading "
+            f"days across {row['episodes']} separate stretches. Over the next {h} sessions the S&amp;P 500 averaged "
+            f"{_signed(row['mean_forward_pct'], 2, '%')} (up {row['share_up_pct']:.0f}% of the time){versus}. {caveat}")
+
+
+def _history_table(risk: dict[str, Any]) -> str:
+    history = risk.get("history")
+    if not history:
+        return ""
+    body = []
+    for key, name in STATE_NAMES.items():
+        row = history["states"][key]
+        now = " <b>(now)</b>" if key == risk.get("state") else ""
+        size = (f'<br><span class="small">{row["days"]} days, {row["episodes"]} '
+                f'stretch{"" if row["episodes"] == 1 else "es"}</span>')
+        if not row["days"]:
+            body.append(f'<tr><td>{name}{now}<br><span class="small">0 days</span></td>'
+                        f'<td class="r">never</td></tr>')
+            continue
+        body.append(f'<tr><td>{name}{now}{size}</td>'
+                    f'<td class="r">{_signed(row["mean_forward_pct"], 2, "%")}'
+                    f'<br><span class="small">up {row["share_up_pct"]:.0f}%</span></td></tr>')
+    return f'''<details class="more"><summary>How each combination has played out since {_long_date(history["start"])}</summary>
+<div class="table-wrap"><table><thead><tr><th>Combination</th>
+<th class="r">S&amp;P, next {history["horizon_sessions"]}</th></tr></thead>
+<tbody>{"".join(body)}</tbody></table></div>
+<p class="small">Averages over the {history["horizon_sessions"]} sessions after each day, {_long_date(history["start"])} to {_long_date(history["end"])}. Each day is classified with this card's rules using only data available that day. Windows overlap, so the stretch count is the real sample size. Short history, limited by {escape(history["limited_by"])}. Descriptive, not a forecast.</p></details>'''
+
+
 def _stock_risk(view: dict[str, Any]) -> str:
     risk = view.get("stock_risk")
     if not risk:
@@ -553,6 +610,8 @@ def _stock_risk(view: dict[str, Any]) -> str:
     stamp = ", ".join(x for x in ((f'VIX {_date(vix["date"])}' if vix else ""),
                                   (f'ERP {date.fromisoformat(erp["month"]):%b %Y}' if erp else "")) if x)
     facts = "".join(f"<li>{p}</li>" for p in stock_risk_lines(risk))
+    line = state_history_line(risk)
+    history_html = ("" if line is None else f'<p class="small">{line}</p>') + _history_table(risk)
     return f'''<section class="ov-block card" id="g-stocks">
 <div class="cap-row"><span class="cap cyan">Stocks vs plumbing</span><span class="cap-meta">{escape(stamp)}</span></div>
 <p class="ov-read">{escape(headline)}</p>
@@ -560,6 +619,7 @@ def _stock_risk(view: dict[str, Any]) -> str:
 {spark}
 <ul class="g-facts">{facts}</ul>
 <p class="g-so"><span class="g-so-l">What's happening</span>{escape(happening)}</p>
+{history_html}
 {you_html(stock_risk_you(risk))}
 <p class="small">Sources: FRED VIXCLS (Cboe), BAMLH0A0HYM2 (ICE BofA), SOFR/IORB; <a href="https://pages.stern.nyu.edu/~adamodar/New_Home_Page/home.htm">Damodaran, NYU Stern</a> implied ERP (his model estimate). Bands and lights are display rules, not calibrated.</p>
 </section>'''
