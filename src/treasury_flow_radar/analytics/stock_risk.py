@@ -32,9 +32,11 @@ prices or says one market caused the other, and none of it is a buy or sell sign
 """
 from __future__ import annotations
 
+import math
+from bisect import bisect_right, insort
 from collections.abc import Iterable, Mapping
 from datetime import date
-from statistics import median
+from statistics import mean, median
 from typing import Any
 
 from treasury_flow_radar.analytics.descriptive import EvidenceType, Observation, _latest_per_date
@@ -51,6 +53,14 @@ CREDIT_SESSIONS = 20
 CREDIT_WIDEN_BPS = 50.0
 ERP_THIN_PCT, ERP_WIDE_PCT = 20.0, 80.0
 MIN_ERP_MONTHS = 36
+# State history (descriptive): how each combination has played out in the stored data.
+HISTORY_HORIZON = 20          # forward S&P 500 sessions
+EPISODE_GAP = 5               # more than 5 trading days between state days starts a new stretch
+FUNDING_MEDIAN_SESSIONS = 10  # same rule as the basis read's funding light
+VOL_SESSIONS = 20             # same rule as the basis read's rate-volatility light
+VOL_ELEVATED_PCT = 80.0
+VOL_MIN_HISTORY = 120
+STATES = ("quiet", "early_warning", "unpriced_stress", "fear_elsewhere", "together")
 
 
 def _day(value: Any) -> date:
@@ -150,6 +160,103 @@ def _state(bond: str | None, vix: dict[str, Any] | None) -> str:
     return "unpriced_stress" if bond == "stressed" else "early_warning"
 
 
+def _on_or_before(table: Mapping[date, Any], days: list[date], day: date) -> Any:
+    """Latest value dated on or before ``day`` within 7 calendar days, else None (no carrying stale data)."""
+    i = bisect_right(days, day) - 1
+    if i < 0 or (day - days[i]).days > 7:
+        return None
+    return table[days[i]]
+
+
+def _point_in_time_lights(observations: list[Observation]) -> dict[str, tuple[list[date], dict[date, bool]]]:
+    """Each bond-side light for every day it can be computed, using only data up to that day."""
+    sofr, iorb = dict(_levels(observations, "SOFR")), dict(_levels(observations, "IORB"))
+    days = sorted(d for d in sofr if d in iorb)
+    spread = [(sofr[d] - iorb[d]) * 100 for d in days]
+    funding = {days[i]: median(spread[i - FUNDING_MEDIAN_SESSIONS + 1: i + 1]) > 0
+               for i in range(FUNDING_MEDIAN_SESSIONS - 1, len(days))}
+
+    yields = _levels(observations, "DGS10")
+    changes = [(yields[i][0], (yields[i][1] - yields[i - 1][1]) * 100) for i in range(1, len(yields))]
+    seen: list[float] = []
+    vol: dict[date, bool] = {}
+    for i in range(VOL_SESSIONS - 1, len(changes)):
+        window = [c for _, c in changes[i - VOL_SESSIONS + 1: i + 1]]
+        avg = sum(window) / VOL_SESSIONS
+        value = math.sqrt(sum((c - avg) ** 2 for c in window) / VOL_SESSIONS)
+        insort(seen, value)
+        if len(seen) >= VOL_MIN_HISTORY:   # expanding percentile: no look-ahead
+            vol[changes[i][0]] = 100.0 * bisect_right(seen, value) / len(seen) >= VOL_ELEVATED_PCT
+
+    hy = _levels(observations, HY_SERIES)
+    credit = {hy[i][0]: (hy[i][1] - hy[i - CREDIT_SESSIONS][1]) * 100 >= CREDIT_WIDEN_BPS
+              for i in range(CREDIT_SESSIONS, len(hy))}
+    return {key: (sorted(table), table) for key, table in
+            (("funding", funding), ("rate_vol", vol), ("credit", credit))}
+
+
+def _episodes(positions: list[int]) -> int:
+    return sum(1 for a, b in zip([None, *positions], positions) if a is None or b - a > EPISODE_GAP)
+
+
+def state_history(observations: list[Observation]) -> dict[str, Any] | None:
+    """How each stocks-vs-plumbing state has played out: forward S&P 500 behavior after each day.
+
+    Every day is classified with the card's rules using only data available on that day
+    (funding and credit as on the card; rate volatility ranked against its history up to that
+    day). Descriptive CALCULATION over overlapping windows: the number of separate stretches
+    (``episodes``) is the real sample size. Past behavior in one period, not a forecast."""
+    spx = _levels(observations, "SP500")
+    vix_points = _levels(observations, VIX_SERIES)
+    if len(spx) <= HISTORY_HORIZON or not vix_points:
+        return None
+    vix_days, vix_map = [d for d, _ in vix_points], dict(vix_points)
+    lights = _point_in_time_lights(observations)
+    spx_days, spx_vals = [d for d, _ in spx], [v for _, v in spx]
+    classified: list[tuple[int, str, float, float, float | None]] = []
+    for i in range(len(spx) - HISTORY_HORIZON):
+        day = spx_days[i]
+        on = [_on_or_before(table, keys, day) for keys, table in lights.values()]
+        level = _on_or_before(vix_map, vix_days, day)
+        if level is None or any(v is None for v in on):
+            continue
+        count = sum(bool(v) for v in on)
+        bond = "calm" if count == 0 else "warning" if count == 1 else "stressed"
+        state = _state(bond, {"nervous": level >= VIX_NERVOUS})
+        forward = (spx_vals[i + HISTORY_HORIZON] / spx_vals[i] - 1) * 100
+        drawdown = (min(spx_vals[i + 1: i + HISTORY_HORIZON + 1]) / spx_vals[i] - 1) * 100
+        later = _on_or_before(vix_map, vix_days, spx_days[i + HISTORY_HORIZON])
+        classified.append((i, state, forward, drawdown, None if later is None else later - level))
+    if not classified:
+        return None
+    states = {}
+    for name in STATES:
+        rows = [r for r in classified if r[1] == name]
+        vix_moves = [r[4] for r in rows if r[4] is not None]
+        states[name] = {
+            "days": len(rows),
+            "episodes": _episodes([r[0] for r in rows]),
+            "mean_forward_pct": mean(r[2] for r in rows) if rows else None,
+            "median_forward_pct": median(r[2] for r in rows) if rows else None,
+            "share_up_pct": 100.0 * sum(r[2] > 0 for r in rows) / len(rows) if rows else None,
+            "mean_max_drawdown_pct": mean(r[3] for r in rows) if rows else None,
+            "mean_vix_change": mean(vix_moves) if vix_moves else None,
+        }
+    return {
+        "start": spx_days[classified[0][0]].isoformat(),
+        "end": spx_days[classified[-1][0]].isoformat(),
+        "classified_days": len(classified),
+        "horizon_sessions": HISTORY_HORIZON,
+        "states": states,
+        "limited_by": "credit (FRED serves about three years of ICE BofA spreads; the window grows as runs store more)",
+        "method": ("each S&P 500 trading day classified with the card's rules using only data available that day; "
+                   "rate volatility ranked against its own history up to that day; forward return = S&P 500 close "
+                   f"{HISTORY_HORIZON} sessions later; a gap of more than {EPISODE_GAP} trading days starts a new "
+                   "stretch. Overlapping windows: the stretch count is the real sample size."),
+        "evidence_type": EvidenceType.CALCULATION.value,
+    }
+
+
 def stock_risk(rows: Iterable[Mapping[str, Any] | Observation],
                basis: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
     """The stocks-vs-plumbing read, or None when neither VIX nor ERP observations are stored."""
@@ -167,6 +274,7 @@ def stock_risk(rows: Iterable[Mapping[str, Any] | Observation],
         "credit": credit,
         "vix": vix,
         "erp": erp,
+        "history": state_history(observations),
         "method": {
             "bond_lights": "funding_tight, vol_elevated (basis read) and high-yield spread up "
                            f"{CREDIT_WIDEN_BPS:.0f} bp or more over {CREDIT_SESSIONS} sessions; 0 calm, 1 warning, "
