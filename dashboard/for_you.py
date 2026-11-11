@@ -274,3 +274,44 @@ def read_you(tone: str | None) -> Entry | None:
     """The plumbing tab's overall read."""
     text = OVERALL.get(str(tone or ""))
     return None if text is None else (text + " " + DISCLAIMER, {})
+
+
+# ---------------------------------------------------------------- Treasury cash (TGA)
+# Market-side language: TGA up = cash leaving banks (a liquidity drain); TGA down = Treasury
+# spending it back out (a liquidity injection). The plan lines restate Treasury's own published
+# cash plan (INFERENCE from Treasury's assumptions), never a forecast of markets.
+
+CASH_WHAT = ("This is the government's checking account at the Fed. When it grows, cash leaves the banks "
+             "(a liquidity drain); when Treasury spends it down, cash flows back in (an injection).")
+
+CASH_DIRECTION: dict[str, Entry] = {
+    "draining": (("Right now it is growing, so spare cash in the banking system is shrinking. A drain like "
+                  "this rarely moves stocks on its own; it matters when it lines up with rising repo costs."),
+                 {"AI & software": "Most sensitive to tighter money: their value rests on profits years away.",
+                  "Chips/semis": "Big, crowded and easy to sell, so often sold first when cash gets scarce.",
+                  "Energy": "Least tied; moves more with oil and the dollar."}),
+    "injecting": (("Right now Treasury is spending it down, so cash is flowing back into the banks. More spare "
+                   "cash is usually a mild tailwind for growth stocks like software and AI."), {}),
+    "flat": ((f"Right now it is roughly steady, so it isn't adding or removing cash. Not a pressure on "
+              f"{YOUR_SECTORS}."), {}),
+}
+
+CASH_OUTLOOK = {
+    "drain_then_injection": ("Treasury's own plan has the balance still climbing to its peak, so the drain may "
+                             "run a little longer before the spend-down that hands cash back."),
+    "injection_ahead": ("Treasury's own plan has the balance falling from here: a spend-down that hands cash "
+                        "back to the banks."),
+    "drain_ahead": ("Treasury's own plan has the balance rising from here: more cash pulled out of the banks."),
+    "neutral": "The balance is close to Treasury's own target, so its plan implies little change from here.",
+}
+
+
+def cash_you(cash: dict | None) -> Entry | None:
+    """The TGA read: what the account is, which way cash is moving, and what Treasury's plan implies."""
+    if not cash or cash.get("balance_bn") is None:
+        return None
+    direction = cash.get("direction")
+    plain, sectors = CASH_DIRECTION.get(str(direction), ("", {}))
+    outlook = CASH_OUTLOOK.get(str((cash.get("plan") or {}).get("outlook")))
+    text = " ".join(t for t in (CASH_WHAT, plain, outlook) if t)
+    return (text, sectors)

@@ -7,7 +7,7 @@ from typing import Any
 
 from treasury_flow_radar.analytics.report import load_observations_read_only
 from treasury_flow_radar.analytics.research import build_research_report
-from treasury_flow_radar.events import load_deals, load_fomc_decisions
+from treasury_flow_radar.events import load_cash_guidance, load_deals, load_fomc_decisions
 
 # Every section except the basis-trade setup reads from the first date of continuous daily
 # collection forward, exactly as before any history was backfilled. The basis-trade setup
@@ -31,4 +31,5 @@ def load_dashboard_report(database_path: str | Path,
     recent = [row for row in rows if _day(row) >= window_start]
     start = min((_day(row) for row in recent), default=end)
     return build_research_report(recent, start_date=start, end_date=end, deals=load_deals(),
-                                 fomc_decisions=load_fomc_decisions(), history_rows=rows)
+                                 fomc_decisions=load_fomc_decisions(), history_rows=rows,
+                                 cash_guidance=load_cash_guidance())
