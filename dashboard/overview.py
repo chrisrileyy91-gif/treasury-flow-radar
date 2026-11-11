@@ -469,6 +469,8 @@ def _cash(view: dict[str, Any]) -> str:
              f'{_date(cash["date"], weekday=True)}'
              + ("" if week is None else f', {_bn(week, signed=True)} on the week') + "."]
     facts += cash_plan_lines(cash)
+    if view.get("inspect_treasury"):
+        facts.append("Treasury's plan couldn't be read this run, so this is the last one stored. Inspect Treasury.")
     plan = cash.get("plan") or {}
     target_bn = (plan.get("target") or {}).get("cash_balance_bn")
     history = [h["value"] for h in cash.get("history") or []]

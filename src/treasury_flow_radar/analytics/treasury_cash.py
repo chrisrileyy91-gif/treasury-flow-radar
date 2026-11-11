@@ -141,3 +141,72 @@ def treasury_cash(rows: Iterable[Mapping[str, Any] | Observation],
             "language": "TGA up = liquidity drain from banks; TGA down = liquidity injection (spend-down)",
         },
     }
+
+
+# ---------------------------------------------------------------- Treasury's plan from stored data
+TARGET_SERIES = "TREASURY_CASH_ASSUMPTION"
+PEAK_SERIES = "TREASURY_TGA_PEAK"
+STATEMENT_SERIES = "TREASURY_REFUNDING_STATEMENT"
+_TREASURY = "https://home.treasury.gov/"
+
+
+def cash_guidance_from_rows(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Treasury's plan as the treasury-refunding source stored it (latest revision of each record).
+
+    Targets: one per quarter end. Peaks: only those from the newest Quarterly Refunding Statement,
+    so a statement that projects no peak clears the previous one. Rows not tied to a
+    home.treasury.gov document are ignored."""
+    targets, peaks, statements = [], [], []
+    for row in rows:
+        series, meta = row.get("series_identifier"), row.get("metadata") or {}
+        url = str(meta.get("url") or "")
+        if series not in (TARGET_SERIES, PEAK_SERIES, STATEMENT_SERIES) or not url.startswith(_TREASURY):
+            continue
+        if series == STATEMENT_SERIES:
+            statements.append(str(row["logical_key"]))
+        elif row.get("value_numeric") is None:
+            continue
+        elif series == TARGET_SERIES:
+            targets.append({"id": f"treasury-{row['logical_key']}", "quarter_end": str(row["logical_key"]),
+                            "cash_balance_usd_bn": float(row["value_numeric"]), "announced": meta.get("announced"),
+                            "sources": [{"url": url, "supports": ["quarter_end", "cash_balance_usd_bn"]}]})
+        else:
+            peaks.append({"id": f"treasury-peak-{row['logical_key']}", "label": meta.get("label"),
+                          "window_start": meta.get("window_start"), "window_end": meta.get("window_end"),
+                          "level_usd_bn": float(row["value_numeric"]), "band_usd_bn": float(meta.get("band_bn", 0)),
+                          "announced": meta.get("announced"),
+                          "sources": [{"url": url, "supports": ["label", "level_usd_bn", "band_usd_bn"]}]})
+    if not targets and not statements:
+        return None
+    latest_statement = max(statements) if statements else None
+    return {"targets": sorted(targets, key=lambda t: t["quarter_end"]),
+            "peaks": sorted((p for p in peaks if p["announced"] == latest_statement), key=lambda p: p["window_start"]),
+            "latest_statement": latest_statement,
+            "latest_estimates": max((str(t["announced"]) for t in targets if t["announced"]), default=None),
+            "window_rule": "early = days 1-15, mid = days 10-20, late = day 16 to month end "
+                           "(interpretation of Treasury's wording)",
+            "origin": "treasury-refunding"}
+
+
+def merge_cash_guidance(stored: Mapping[str, Any] | None,
+                        seed: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Stored plan (read automatically from Treasury) over the hand-kept seed ledger.
+
+    A stored quarter-end replaces the seed's; once any statement has been read automatically its
+    peaks replace the seed's. The seed's next-release date is kept only while it is still ahead of
+    the newest release read."""
+    if not stored:
+        return dict(seed) if seed else None
+    targets = {t["quarter_end"]: t for t in (seed or {}).get("targets") or []}
+    targets.update({t["quarter_end"]: t for t in stored.get("targets") or []})
+    peaks = stored.get("peaks") if stored.get("latest_statement") else (seed or {}).get("peaks") or []
+    newest = max((d for d in (stored.get("latest_statement"), stored.get("latest_estimates")) if d), default="")
+    next_release = (seed or {}).get("next_release")
+    return {"targets": sorted(targets.values(), key=lambda t: t["quarter_end"]),
+            "peaks": list(peaks or []),
+            "window_rule": stored.get("window_rule") or (seed or {}).get("window_rule"),
+            "next_release": next_release if next_release and str(next_release) > newest else None,
+            "next_release_source": (seed or {}).get("next_release_source"),
+            "latest_statement": stored.get("latest_statement"),
+            "latest_estimates": stored.get("latest_estimates"),
+            "origin": "treasury-refunding"}

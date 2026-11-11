@@ -154,7 +154,9 @@ TABS = (("overview", "Overview"), ("plumbing", "Plumbing"), ("moves", "Moves"),
 def _header(view: dict[str, Any], live: bool) -> str:
     through = view["data_through"]
     stamp = _day(through, year=False) if through else "no data"
-    alert = '<span class="palert" role="status">Inspect FRED.</span>' if view.get("inspect_fred") else ""
+    alert = "".join(f'<span class="palert" role="status">Inspect {name}.</span>'
+                    for name, flag in (("FRED", view.get("inspect_fred")), ("Treasury", view.get("inspect_treasury")))
+                    if flag)
     return f'''<header class="site">
 <div class="phead"><a class="pbrand" href="./" aria-label="Treasury Flow Radar, overview">\
 <svg aria-hidden="true" width="15" height="18" viewBox="0 0 15 18"><rect x="0" y="12" width="15" height="6" fill="#22d3ee"/></svg>\

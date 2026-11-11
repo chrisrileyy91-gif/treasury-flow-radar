@@ -1,4 +1,4 @@
-"""Post a Pheme line to Discord when a publish run failed to pull FRED.
+"""Post a Pheme line to Discord when a publish run failed to pull FRED or read Treasury's cash plan.
 
     python -m treasury_flow_radar.alert ingest-report.json
 
@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from treasury_flow_radar.run_health import fred_failures, load_ingest_report
+from treasury_flow_radar.run_health import fred_failures, load_ingest_report, treasury_failures
 
 PAGE_URL = "https://chrisrileyy91-gif.github.io/treasury-flow-radar/"
 MAX_REASONS = 3
@@ -30,18 +30,24 @@ def build_message(report: Mapping[str, Any] | None) -> str | None:
     if report is None:
         return (f"Treasury Flow Radar: the run left no readable ingest report, so FRED can't be checked. "
                 f"Inspect FRED.\n{PAGE_URL}")
-    failed = fred_failures(report)
-    if not failed:
-        return None
-    total = sum(1 for s in report.get("sources") or [] if str(s.get("source", "")).startswith("fred"))
     run_day = report.get("end_date") or "this run"
-    lines = [(f"Treasury Flow Radar ({run_day}): FRED failed for {len(failed)} of {total} FRED sources. "
-              f"Yields on the page are stale until the next good run. Inspect FRED.")]
-    reasons = Counter(str(s.get("message") or "no message") for s in failed)
-    for reason, count in reasons.most_common(MAX_REASONS):
-        lines.append(f"- {reason} (x{count})" if count > 1 else f"- {reason}")
-    if len(reasons) > MAX_REASONS:
-        lines.append(f"- and {len(reasons) - MAX_REASONS} other errors")
+    lines: list[str] = []
+    failed = fred_failures(report)
+    if failed:
+        total = sum(1 for s in report.get("sources") or [] if str(s.get("source", "")).startswith("fred"))
+        lines.append(f"Treasury Flow Radar ({run_day}): FRED failed for {len(failed)} of {total} FRED sources. "
+                     f"Yields on the page are stale until the next good run. Inspect FRED.")
+        reasons = Counter(str(s.get("message") or "no message") for s in failed)
+        for reason, count in reasons.most_common(MAX_REASONS):
+            lines.append(f"- {reason} (x{count})" if count > 1 else f"- {reason}")
+        if len(reasons) > MAX_REASONS:
+            lines.append(f"- and {len(reasons) - MAX_REASONS} other errors")
+    for failure in treasury_failures(report):
+        lines.append(f"Treasury Flow Radar ({run_day}): couldn't read Treasury's refunding documents, so the TGA "
+                     f"card keeps the last plan it read. Inspect Treasury.")
+        lines.append(f"- {failure.get('message') or 'no message'}")
+    if not lines:
+        return None
     lines.append(PAGE_URL)
     return "\n".join(lines)
 
@@ -66,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     path = Path(args[0]) if args else Path("ingest-report.json")
     message = build_message(load_ingest_report(path))
     if message is None:
-        print("Pheme: FRED came through, nothing to post")
+        print("Pheme: FRED and Treasury came through, nothing to post")
         return 0
     print(message)
     webhook = os.environ.get("DISCORD_PHEME_WEBHOOK", "")

@@ -1,4 +1,4 @@
-# Temporary probe (removed before merge): can Actions read Treasury's refunding pages, and what HTML comes back?
+# Temporary probe (removed before merge): run the real reader against Treasury's live pages.
 name: Probe Treasury refunding pages
 on:
   push:
@@ -10,38 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Fetch and describe
-        run: |
-          python - <<'PY'
-          import html, re, urllib.request
-          pages = {"recent": "https://home.treasury.gov/policy-issues/financing-the-government/quarterly-refunding/most-recent-quarterly-refunding-documents",
-                   "estimates": "https://home.treasury.gov/news/press-releases/sb0675",
-                   "statement": "https://home.treasury.gov/news/press-releases/sb0678"}
-          for ua in ("treasury-flow-radar/0.1 (research)", "Mozilla/5.0 (treasury-flow-radar)"):
-              for name, url in pages.items():
-                  try:
-                      with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": ua}), timeout=30) as r:
-                          body = r.read().decode("utf-8", "replace")
-                          print(f"[{ua[:18]}] {name}: HTTP {r.status} {len(body)} chars {r.headers.get('Content-Type')}")
-                  except Exception as exc:
-                      print(f"[{ua[:18]}] {name}: FAILED {type(exc).__name__} {exc}")
-                      continue
-                  if not ua.startswith("Mozilla"):
-                      continue
-                  if name == "recent":
-                      for m in re.finditer(r'<a[^>]+href="([^"]*press-releases/[^"]*)"[^>]*>(.*?)</a>', body, re.S):
-                          print("   LINK", m.group(1), "|", re.sub(r"\s+", " ", re.sub("<[^>]+>", "", m.group(2))).strip())
-                      for m in re.finditer(r"Released[^<]{0,80}", body):
-                          print("   REL", m.group(0).strip())
-                  else:
-                      for m in re.finditer(r"<time[^>]*>[^<]*</time>|datetime=\"[^\"]+\"", body):
-                          print("   TIME", m.group(0)[:160])
-                      for m in re.finditer(r"<h1[^>]*>.*?</h1>", body, re.S):
-                          print("   H1", re.sub(r"\s+", " ", m.group(0))[:200])
-                      for key in ("cash balance of", "could peak", "cash balance at the end of"):
-                          for m in re.finditer(re.escape(key), body):
-                              print(f"   RAW[{key}]", repr(body[max(0, m.start()-260): m.end()+120]))
-          PY
+      - run: pip install -q -e .
+      - name: Dry run against live pages
+        run: python -m treasury_flow_radar.sources.treasury_refunding --dry-run

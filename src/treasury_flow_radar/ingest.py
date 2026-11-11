@@ -20,6 +20,7 @@ from treasury_flow_radar.sources.fred_releases import ingest_release_dates
 from treasury_flow_radar.sources.nyfed import ingest_nyfed
 from treasury_flow_radar.sources.sec_edgar import ingest_edgar_pricings
 from treasury_flow_radar.sources.treasury_auctions import ingest_treasury_auctions
+from treasury_flow_radar.sources.treasury_refunding import ingest_refunding
 
 DEFAULT_WINDOW_DAYS = 730
 FRED_SOURCES = {
@@ -32,7 +33,7 @@ FRED_SOURCES = {
     "fred-tga": "WTREGEN", "fred-vix": "VIXCLS",
 }
 SOURCE_NAMES = (*FRED_SOURCES, "fred-releases", "sec-edgar", "nyfed", "cftc", "treasury-auctions",
-                "damodaran-erp")
+                "damodaran-erp", "treasury-refunding")
 SOURCE_LABELS = {
     **{key: f"FRED {series}" for key, series in FRED_SOURCES.items()},
     "fred-releases": "FRED release calendar (CPI, jobs, PCE, GDP, retail sales, PPI, JOLTS, claims)",
@@ -41,6 +42,7 @@ SOURCE_LABELS = {
     "cftc": "CFTC Treasury futures positioning",
     "treasury-auctions": "U.S. Treasury auctions",
     "damodaran-erp": "Damodaran monthly implied equity risk premium (NYU Stern)",
+    "treasury-refunding": "U.S. Treasury quarterly refunding documents (cash plan)",
 }
 
 
@@ -192,6 +194,8 @@ def run_ingestion(
         # The whole monthly history (from 2008) is kept regardless of the window: it is small,
         # and the premium is read against its long record.
         "damodaran-erp": lambda: ingest_erp(database_path=database_path),
+        # Always the current refunding's documents; the window does not apply.
+        "treasury-refunding": lambda: ingest_refunding(database_path=database_path),
     }
     if adapter_functions:
         adapters.update({key: value for key, value in adapter_functions.items() if key in adapters})
@@ -206,6 +210,7 @@ def run_ingestion(
         source_identifier = {
             **dict.fromkeys(FRED_SOURCES, "FRED"), "fred-releases": "FRED", "sec-edgar": "SEC_EDGAR_PRICINGS", "nyfed": "NYFED",
             "cftc": "CFTC", "treasury-auctions": "U.S. Treasury Fiscal Data", "damodaran-erp": "DAMODARAN",
+            "treasury-refunding": "TREASURY_REFUNDING",
         }[key]
         series_identifier = FRED_SOURCES.get(key)
         old_observations = old_raw = 0
