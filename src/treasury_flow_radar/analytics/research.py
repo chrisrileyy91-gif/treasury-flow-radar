@@ -26,6 +26,7 @@ from treasury_flow_radar.analytics.market_context import SERIES as CONTEXT_SERIE
 from treasury_flow_radar.analytics.market_context import market_context
 from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
 from treasury_flow_radar.analytics.positioning_moves import unusual_dealer_moves
+from treasury_flow_radar.analytics.stock_risk import stock_risk
 from treasury_flow_radar.analytics.temporal import align_observation
 from treasury_flow_radar.analytics.treasury_cash import treasury_cash
 from treasury_flow_radar.sources.fred_releases import (
@@ -530,6 +531,7 @@ def build_research_report(
         "basis_setup": basis,
         "plumbing_synthesis": synthesize(basis),
         "treasury_cash": treasury_cash(source_rows if history is None else history, cash_guidance),
+        "stock_risk": stock_risk(source_rows if history is None else history, basis),
         "treasury_auctions": auctions,
         "event_study_windows": ["T-5 through T+5", "T-3 through T+3", "T-1 through T+1"],
         "market_confirmation": market_summary,

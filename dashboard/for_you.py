@@ -315,3 +315,73 @@ def cash_you(cash: dict | None) -> Entry | None:
     outlook = CASH_OUTLOOK.get(str((cash.get("plan") or {}).get("outlook")))
     text = " ".join(t for t in (CASH_WHAT, plain, outlook) if t)
     return (text, sectors)
+
+
+# ---------------------------------------------------------------- stocks vs plumbing
+# Each state: a headline, then "what's happening" in plain words. MECHANISM and OBSERVATION only:
+# what the combination describes and how it usually reaches stocks, never when or whether it will.
+
+_EXPOSED = {"AI & software": "Most exposed if stress reaches stocks: valuations built on distant profits reprice hardest.",
+            "Chips/semis": "Crowded and easy to sell, so often sold first when funds need cash.",
+            "Energy": "Least tied to funding stress; moves more with oil and the dollar."}
+
+STOCK_STATE: dict[str, tuple[str, str, dict[str, str]]] = {
+    "quiet": ("Quiet on both sides.",
+              ("Neither the bond market's pipes nor stock investors are showing stress. When both are calm, moves "
+               "in your stocks are mostly about their own news: earnings, guidance, AI spending."), {}),
+    "early_warning": ("A warning light in the pipes; stocks aren't reacting.",
+                      ("One bond-side gauge is flashing while stock investors stay calm. A single warning often fades "
+                       "without reaching stocks. It starts to matter if a second gauge joins it or the VIX begins "
+                       "to climb."), {}),
+    "unpriced_stress": ("Stress in the pipes that stocks haven't priced.",
+                        ("Two or more bond-side gauges are flashing while the VIX stays calm, so stock prices aren't "
+                         "reflecting the strain. Either it eases inside the plumbing, or it reaches stocks later; when "
+                         "it does, it usually travels through forced selling, which hits crowded, easy-to-sell names "
+                         "first."), _EXPOSED),
+    "fear_elsewhere": ("Stocks are nervous, but not because of the pipes.",
+                       ("The VIX is elevated while funding, rate volatility and credit are calm, so the fear is coming "
+                        "from somewhere else: earnings, growth worries, policy or geopolitics. With the plumbing calm, "
+                        "there's no funding squeeze adding forced, everything-at-once selling on top."),
+                       {"AI & software": "If the worry is about AI spending or demand, these sit at the center of it.",
+                        "Chips/semis": "Swing hardest when the worry is about demand.",
+                        "Energy": "Moves with oil and growth fears more than with the plumbing."}),
+    "together": ("Stress in the pipes and in stocks at the same time.",
+                 ("Bond-side gauges are flashing and stock investors are nervous together. That is the combination "
+                  "where stress can feed on itself: falling prices force selling, and selling tightens funding further. "
+                  "It describes the conditions, not how far they go."), _EXPOSED),
+    "partial": ("Partial read: some inputs aren't stored yet.",
+                "Not every gauge has data yet, so the two sides can't be compared.", {}),
+}
+
+
+def stock_state(state: str | None) -> tuple[str, str, dict[str, str]]:
+    return STOCK_STATE.get(str(state), STOCK_STATE["partial"])
+
+
+def erp_you(erp: dict | None) -> str | None:
+    """What the implied equity risk premium says, in plain words."""
+    if not erp or erp.get("erp_percent") is None:
+        return None
+    base = (f"The equity risk premium is the extra yearly return stocks are priced to deliver over 10-year "
+            f"Treasuries: about {erp['erp_percent']:.2f}% now.")
+    band = erp.get("band")
+    if band == "thin":
+        return base + (" That's thinner than most months since 2008, so prices already assume things go well and "
+                       "there's less cushion if earnings or rates disappoint. It doesn't say when, or whether, that "
+                       "happens.")
+    if band == "wide":
+        return base + (" That's wider than most months since 2008: investors are demanding a lot to hold stocks, "
+                       "so prices leave room for things merely staying okay.")
+    if band == "middle":
+        return base + " That's in the middle of its range since 2008: neither stretched nor cheap by this measure."
+    return base
+
+
+def stock_risk_you(risk: dict | None) -> Entry | None:
+    """The 'What this means for you' box for the stocks-vs-plumbing card."""
+    if not risk:
+        return None
+    _, _, sectors = stock_state(risk.get("state"))
+    erp = erp_you(risk.get("erp"))
+    plain = erp or "The equity risk premium isn't stored yet."
+    return (plain + " " + DISCLAIMER, sectors)

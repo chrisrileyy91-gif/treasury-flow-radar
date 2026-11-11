@@ -23,6 +23,8 @@ from dashboard.for_you import (
     drivers_you,
     for_you,
     level_you,
+    stock_risk_you,
+    stock_state,
     supply_you,
     you_html,
 )
@@ -488,6 +490,81 @@ def _cash(view: dict[str, Any]) -> str:
 </section>'''
 
 
+LIGHT_WORDS = {True: "on", False: "off", None: "no data"}
+BOND_WORDS = {"calm": "calm", "warning": "one light on", "stressed": "stressed"}
+
+
+def stock_risk_lines(risk: dict[str, Any]) -> list[str]:
+    """What each side is showing, in plain words, with the numbers behind it."""
+    lines = []
+    bond = risk.get("bond") or {}
+    credit = risk.get("credit")
+    lit = {lt["key"]: lt["on"] for lt in bond.get("lights") or []}
+    parts = [f'funding {"tight (repo above the Fed\'s rate)" if lit.get("funding") else "cheap" if lit.get("funding") is False else "no data"}',
+             f'rate volatility {"elevated" if lit.get("rate_vol") else "normal" if lit.get("rate_vol") is False else "no data"}']
+    if credit and credit.get("change_bps") is not None:
+        parts.append(f'credit spreads {credit["hy_spread_percent"]:.2f}%, {_signed(credit["change_bps"], 0, " bp")} '
+                     f'in {credit["change_sessions"]} sessions' + (" (widening)" if credit.get("widening") else ""))
+    else:
+        parts.append("credit no data")
+    lines.append(f'<b>Bond side</b> ({bond.get("lights_on", 0)} of 3 lights on): {"; ".join(parts)}.')
+    if bond.get("crowded"):
+        lines.append("The basis trade is crowded, so if stress builds there is more to force out.")
+    vix = risk.get("vix")
+    if vix:
+        move = "" if vix.get("change") is None else f', {_signed(vix["change"], 1)} over {vix["change_sessions"]} sessions'
+        rank = ("" if vix.get("percentile") is None else
+                f'; higher than {vix["percentile"]:.0f}% of sessions since {_date(vix["history_start"])}, '
+                f'{date.fromisoformat(vix["history_start"]).year}')
+        lines.append(f'<b>Stocks</b>: VIX <b>{vix["level"]:.1f}</b> ({vix["band"]}) on {_date(vix["date"])}{move}{rank}.')
+    else:
+        lines.append("<b>Stocks</b>: no VIX observations stored yet.")
+    erp = risk.get("erp")
+    if erp:
+        month = date.fromisoformat(erp["month"])
+        change = "" if erp.get("change_bps") is None else f', {_signed(erp["change_bps"], 0, " bp")} on the month'
+        rank = ("" if erp.get("percentile") is None else
+                f'; lower than {100 - erp["percentile"]:.0f}% of months since {date.fromisoformat(erp["history_start"]):%b %Y} '
+                f'(median {erp["median_percent"]:.2f}%)')
+        lines.append(f'<b>Risk premium</b>: {erp["erp_percent"]:.2f}% at the start of {month:%B}{change}{rank}.')
+        if erp.get("implied_return_percent") is not None:
+            lines.append(f'On a 10-year Treasury of {erp["tbond_percent"]:.2f}%, that prices stocks for about '
+                         f'{erp["implied_return_percent"]:.1f}% a year.')
+    return lines
+
+
+def _stock_risk(view: dict[str, Any]) -> str:
+    risk = view.get("stock_risk")
+    if not risk:
+        return ""
+    headline, happening, _ = stock_state(risk.get("state"))
+    vix = risk.get("vix") or {}
+    erp = risk.get("erp") or {}
+    bond = risk.get("bond") or {}
+    chips = "".join(
+        f'<span class="trip trip-{"over" if lt["on"] else "clear" if lt["on"] is False else "unknown"}">'
+        f'<span class="trip-n">{escape(lt["name"])}</span><span class="trip-s">{LIGHT_WORDS[lt["on"]]}</span></span>'
+        for lt in bond.get("lights") or [])
+    vix_chip = ("" if not vix else
+                f'<span class="trip trip-{"over" if vix.get("nervous") else "clear"}"><span class="trip-n">VIX</span>'
+                f'<span class="trip-v">{vix["level"]:.1f}</span><span class="trip-s">{escape(vix["band"])}</span></span>')
+    spark = sparkline([h["value"] for h in vix.get("history") or []], baseline=20.0,
+                      label="VIX, last sessions; dashed line at 20, where stocks count as nervous")
+    stamp = ", ".join(x for x in ((f'VIX {_date(vix["date"])}' if vix else ""),
+                                  (f'ERP {date.fromisoformat(erp["month"]):%b %Y}' if erp else "")) if x)
+    facts = "".join(f"<li>{p}</li>" for p in stock_risk_lines(risk))
+    return f'''<section class="ov-block card" id="g-stocks">
+<div class="cap-row"><span class="cap cyan">Stocks vs plumbing</span><span class="cap-meta">{escape(stamp)}</span></div>
+<p class="ov-read">{escape(headline)}</p>
+<nav class="trips" aria-label="Bond-side lights and stock nerves">{chips}{vix_chip}</nav>
+{spark}
+<ul class="g-facts">{facts}</ul>
+<p class="g-so"><span class="g-so-l">What's happening</span>{escape(happening)}</p>
+{you_html(stock_risk_you(risk))}
+<p class="small">Sources: FRED VIXCLS (Cboe), BAMLH0A0HYM2 (ICE BofA), SOFR/IORB; <a href="https://pages.stern.nyu.edu/~adamodar/New_Home_Page/home.htm">Damodaran, NYU Stern</a> implied ERP (his model estimate). Bands and lights are display rules, not calibrated.</p>
+</section>'''
+
+
 def overview(view: dict[str, Any]) -> str:
-    return "".join((_instrument(view), _cash(view), _ten_year(view), _drivers(view), _positioning(view),
-                    _supply(view)))
+    return "".join((_instrument(view), _stock_risk(view), _cash(view), _ten_year(view), _drivers(view),
+                    _positioning(view), _supply(view)))

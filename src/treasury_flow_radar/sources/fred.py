@@ -110,6 +110,13 @@ SUPPORTED_SERIES = {
         "instrument_type": "government_cash_balance", "unit": "million_us_dollars",
         "observation_units": "Millions of U.S. Dollars", "frequency": "weekly",
     },
+    # Stock-market nerves, for the stocks-vs-plumbing read. Not a Treasury measure.
+    "VIXCLS": {
+        "name": "CBOE Volatility Index: VIX",
+        "description": "Market expectation of S&P 500 volatility over the next 30 days, implied by index "
+                       "option prices; daily close, index points (Chicago Board Options Exchange).",
+        "instrument_type": "volatility_index", "unit": "index", "observation_units": "Index",
+    },
     "DTWEXBGS": {
         "name": "Nominal Broad U.S. Dollar Index",
         "description": "Federal Reserve trade-weighted broad dollar index (Jan 2006 = 100), from the H.10 "

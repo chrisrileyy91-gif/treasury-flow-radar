@@ -14,6 +14,7 @@ from typing import Any
 
 from treasury_flow_radar.database import DEFAULT_DB_PATH
 from treasury_flow_radar.sources.cftc import ingest_cftc
+from treasury_flow_radar.sources.damodaran_erp import ingest_erp
 from treasury_flow_radar.sources.fred import ingest_fred
 from treasury_flow_radar.sources.fred_releases import ingest_release_dates
 from treasury_flow_radar.sources.nyfed import ingest_nyfed
@@ -28,9 +29,10 @@ FRED_SOURCES = {
     "fred-ig-spread": "BAMLC0A0CM", "fred-hy-spread": "BAMLH0A0HYM2", "fred-sp500": "SP500",
     "fred-dollar": "DTWEXBGS",
     "fred-sofr": "SOFR", "fred-sofr99": "SOFR99", "fred-iorb": "IORB",
-    "fred-tga": "WTREGEN",
+    "fred-tga": "WTREGEN", "fred-vix": "VIXCLS",
 }
-SOURCE_NAMES = (*FRED_SOURCES, "fred-releases", "sec-edgar", "nyfed", "cftc", "treasury-auctions")
+SOURCE_NAMES = (*FRED_SOURCES, "fred-releases", "sec-edgar", "nyfed", "cftc", "treasury-auctions",
+                "damodaran-erp")
 SOURCE_LABELS = {
     **{key: f"FRED {series}" for key, series in FRED_SOURCES.items()},
     "fred-releases": "FRED release calendar (CPI, jobs, PCE, GDP, retail sales, PPI, JOLTS, claims)",
@@ -38,6 +40,7 @@ SOURCE_LABELS = {
     "nyfed": "NY Fed Primary Dealer Treasury positioning",
     "cftc": "CFTC Treasury futures positioning",
     "treasury-auctions": "U.S. Treasury auctions",
+    "damodaran-erp": "Damodaran monthly implied equity risk premium (NYU Stern)",
 }
 
 
@@ -186,6 +189,9 @@ def run_ingestion(
         "treasury-auctions": lambda: ingest_treasury_auctions(
             database_path=database_path, start_date=start, end_date=end,
         ),
+        # The whole monthly history (from 2008) is kept regardless of the window: it is small,
+        # and the premium is read against its long record.
+        "damodaran-erp": lambda: ingest_erp(database_path=database_path),
     }
     if adapter_functions:
         adapters.update({key: value for key, value in adapter_functions.items() if key in adapters})
@@ -199,7 +205,7 @@ def run_ingestion(
             continue
         source_identifier = {
             **dict.fromkeys(FRED_SOURCES, "FRED"), "fred-releases": "FRED", "sec-edgar": "SEC_EDGAR_PRICINGS", "nyfed": "NYFED",
-            "cftc": "CFTC", "treasury-auctions": "U.S. Treasury Fiscal Data",
+            "cftc": "CFTC", "treasury-auctions": "U.S. Treasury Fiscal Data", "damodaran-erp": "DAMODARAN",
         }[key]
         series_identifier = FRED_SOURCES.get(key)
         old_observations = old_raw = 0
