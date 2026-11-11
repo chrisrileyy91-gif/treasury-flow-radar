@@ -7,7 +7,11 @@ from pathlib import Path
 
 from dashboard.renderer import render_report
 from dashboard.reporting import load_dashboard_report
-from treasury_flow_radar.run_health import fred_needs_inspection, load_ingest_report
+from treasury_flow_radar.run_health import (
+    fred_needs_inspection,
+    load_ingest_report,
+    treasury_needs_inspection,
+)
 
 # Home-screen and tab icons the page links to by relative path (rendered from assets/icon.svg),
 # plus the web app manifest Android reads for its home-screen icon and name, and a pass-through
@@ -32,7 +36,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     report = load_dashboard_report(args.database)
     if args.ingest_report is not None:
-        report["run_health"] = {"fred_failed": fred_needs_inspection(load_ingest_report(args.ingest_report))}
+        run = load_ingest_report(args.ingest_report)
+        report["run_health"] = {"fred_failed": fred_needs_inspection(run),
+                                "treasury_failed": treasury_needs_inspection(run)}
     html = render_report(report)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(html, encoding="utf-8", newline="")

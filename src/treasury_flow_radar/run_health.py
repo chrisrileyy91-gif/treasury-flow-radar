@@ -36,3 +36,21 @@ def fred_needs_inspection(report: Mapping[str, Any] | None) -> bool:
     A report that simply has no FRED sources (a backfill run limited to, say, CFTC) is fine.
     """
     return report is None or bool(fred_failures(report))
+
+
+TREASURY_SOURCE = "treasury-refunding"
+
+
+def treasury_failures(report: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """The Treasury refunding read, when this run marked it FAILED."""
+    if not report:
+        return []
+    return [dict(s) for s in report.get("sources") or []
+            if isinstance(s, Mapping) and s.get("source") == TREASURY_SOURCE and s.get("status") == "FAILED"]
+
+
+def treasury_needs_inspection(report: Mapping[str, Any] | None) -> bool:
+    """True when the run tried to read Treasury's cash plan and could not.
+
+    A missing report is already flagged as "Inspect FRED.", so it is not flagged twice here."""
+    return bool(treasury_failures(report))
