@@ -528,8 +528,8 @@ def stock_risk_lines(risk: dict[str, Any]) -> list[str]:
                 f'(median {erp["median_percent"]:.2f}%)')
         lines.append(f'<b>Risk premium</b>: {erp["erp_percent"]:.2f}% at the start of {month:%B}{change}{rank}.')
         if erp.get("implied_return_percent") is not None:
-            lines.append(f'On a 10-year Treasury of {erp["tbond_percent"]:.2f}%, that prices stocks for about '
-                         f'{erp["implied_return_percent"]:.1f}% a year.')
+            lines.append(f'Added to the 10-year rate Damodaran used ({erp["tbond_percent"]:.2f}% at the start of '
+                         f'{month:%B}), that prices stocks for about {erp["implied_return_percent"]:.1f}% a year.')
     return lines
 
 

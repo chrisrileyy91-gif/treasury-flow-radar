@@ -198,6 +198,7 @@ def test_card_explains_what_is_happening_on_each_side():
     assert "2 of 3 lights on" in lines and "funding tight" in lines and "(widening)" in lines
     assert "VIX <b>16.0</b> (normal)" in lines and "Risk premium</b>: 4.41%" in lines
     assert "about 9.3% a year" in lines or "about 9.4% a year" in lines
+    assert "10-year rate Damodaran used (4.94% at the start of November)" in lines
     assert "crowded" in lines
     assert 'id="g-stocks"' not in overview({"stock_risk": None})
 
@@ -207,4 +208,6 @@ def test_quiet_card_has_no_sector_lines_and_no_text_gives_trade_instructions():
     assert "Quiet on both sides." in html and 'class="g-you-s"' not in html
     texts = [t for head, body, sectors in fy.STOCK_STATE.values() for t in (head, body, *sectors.values())]
     texts += [fy.erp_you({"erp_percent": 4.4, "band": b}) for b in ("thin", "wide", "middle", None)]
+    assert "since 2016" in fy.erp_you({"erp_percent": 4.4, "band": "middle", "history_start": "2016-01-01"})
+    assert "2008" not in fy.erp_you({"erp_percent": 4.4, "band": "thin", "history_start": "2016-01-01"})
     assert texts and not [t for t in texts if BANNED.search(t)]
