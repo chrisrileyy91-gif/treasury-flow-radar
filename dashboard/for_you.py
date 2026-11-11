@@ -365,15 +365,16 @@ def erp_you(erp: dict | None) -> str | None:
     base = (f"The equity risk premium is the extra yearly return stocks are priced to deliver over 10-year "
             f"Treasuries: about {erp['erp_percent']:.2f}% now.")
     band = erp.get("band")
+    since = str(erp.get("history_start") or "")[:4] or "its stored history"
     if band == "thin":
-        return base + (" That's thinner than most months since 2008, so prices already assume things go well and "
+        return base + (f" That's thinner than most months since {since}, so prices already assume things go well and "
                        "there's less cushion if earnings or rates disappoint. It doesn't say when, or whether, that "
                        "happens.")
     if band == "wide":
-        return base + (" That's wider than most months since 2008: investors are demanding a lot to hold stocks, "
+        return base + (f" That's wider than most months since {since}: investors are demanding a lot to hold stocks, "
                        "so prices leave room for things merely staying okay.")
     if band == "middle":
-        return base + " That's in the middle of its range since 2008: neither stretched nor cheap by this measure."
+        return base + f" That's in the middle of its range since {since}: neither stretched nor cheap by this measure."
     return base
 
 
