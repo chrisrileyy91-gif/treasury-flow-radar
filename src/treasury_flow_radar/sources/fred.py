@@ -100,6 +100,16 @@ SUPPORTED_SERIES = {
                        "FRED series begins 2021-07-29 and includes non-business days).",
         "instrument_type": "policy_rate", "unit": "percent", "observation_units": "Percent",
     },
+    # Treasury cash (liquidity read). A weekly H.4.1 average, not a daily statement balance.
+    "WTREGEN": {
+        "name": "Deposits with F.R. Banks, Other Than Reserve Balances: U.S. Treasury, General Account: "
+                "Week Average",
+        "description": "Treasury General Account (TGA) balance at the Federal Reserve, millions of U.S. "
+                       "dollars, average of the week ending Wednesday (H.4.1). Cash here is outside the "
+                       "banking system: a rising balance drains bank reserves, a falling one adds them.",
+        "instrument_type": "government_cash_balance", "unit": "million_us_dollars",
+        "observation_units": "Millions of U.S. Dollars", "frequency": "weekly",
+    },
     "DTWEXBGS": {
         "name": "Nominal Broad U.S. Dollar Index",
         "description": "Federal Reserve trade-weighted broad dollar index (Jan 2006 = 100), from the H.10 "
@@ -441,7 +451,7 @@ def ingest_fred(
                 name=definition["name"],
                 description=definition["description"],
                 instrument_type=definition.get("instrument_type", "treasury_yield"),
-                frequency="daily",
+                frequency=definition.get("frequency", "daily"),
                 default_unit=definition.get("unit", RATE_UNIT),
                 metadata={
                     "provider": "FRED",

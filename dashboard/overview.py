@@ -18,6 +18,7 @@ from dashboard.for_you import (
     FUNDING,
     OVERALL,
     VOLATILITY,
+    cash_you,
     dealer_you,
     drivers_you,
     for_you,
@@ -398,5 +399,95 @@ def _supply(view: dict[str, Any]) -> str:
 </section>'''
 
 
+CASH_WORDS = {"draining": "liquidity draining", "injecting": "liquidity injecting", "flat": "roughly steady"}
+CASH_TONE = {"draining": "neg", "injecting": "pos", "flat": "neu"}
+
+
+def _bn(value: float, *, signed: bool = False) -> str:
+    """Billions with a dollar sign, e.g. $957B or +$68B."""
+    text = f"${abs(value):,.0f}B"
+    if not signed or round(value) == 0:
+        return text
+    return ("+" if value > 0 else MINUS) + text
+
+
+def _flow(change: float) -> str:
+    """A planned change in Treasury cash, said from the market's side."""
+    if round(change) == 0:
+        return "no net change"
+    return (f"about {_bn(change)} more pulled out of banks (drain)" if change > 0 else
+            f"about {_bn(change)} handed back to banks (injection)")
+
+
+def cash_plan_lines(cash: dict[str, Any]) -> list[str]:
+    """Treasury's own plan against the current balance, in plain words (INFERENCE from its guidance)."""
+    plan = cash.get("plan")
+    if not plan:
+        return ["Treasury's cash plan is not loaded, so only the direction is shown."]
+    if plan["phase"] == "no_guidance":
+        nxt = plan.get("next_release")
+        return ["Treasury's latest plan has run past its quarter end"
+                + (f"; the next refunding update is due {_date(nxt)}." if nxt else ".")]
+    target = plan["target"]
+    end = date.fromisoformat(target["quarter_end"])
+    lines = []
+    peak = plan.get("peak")
+    if peak:
+        lines.append(f'Treasury\'s plan: a peak near <b>{_bn(peak["level_bn"])}</b> (±{_bn(peak["band_bn"])}) in '
+                     f'{escape(peak["label"])}, then <b>{_bn(target["cash_balance_bn"])}</b> by {_date(end)}, {end.year}.')
+        lines.append(f'From here: {_flow(peak["rise_to_peak_bn"])} to reach the peak, then '
+                     f'{_flow(peak["release_after_peak_bn"])} by year-end.' if end.month == 12 else
+                     f'From here: {_flow(peak["rise_to_peak_bn"])} to reach the peak, then '
+                     f'{_flow(peak["release_after_peak_bn"])} by {_date(end)}.')
+    else:
+        weeks = plan["days_to_quarter_end"] / 7
+        weekly = plan.get("implied_weekly_change_bn")
+        pace = "" if weekly is None or round(weekly) == 0 else f", roughly {_bn(weekly)} a week"
+        lines.append(f'Treasury\'s plan: <b>{_bn(target["cash_balance_bn"])}</b> by {_date(end)}, {end.year}. '
+                     f'That is {_flow(plan["planned_change_to_target_bn"])} over about {weeks:.0f} weeks{pace}.')
+    following = plan.get("following")
+    if following:
+        nxt = date.fromisoformat(following["quarter_end"])
+        lines.append(f'After that, its plan is {_bn(following["cash_balance_bn"])} by {_date(nxt)}, {nxt.year}: '
+                     f'{_flow(following["change_from_target_bn"])}.')
+    return lines
+
+
+def _cash(view: dict[str, Any]) -> str:
+    cash = view.get("cash")
+    if not cash or cash.get("balance_bn") is None:
+        return ""
+    direction = cash.get("direction")
+    four = cash.get("four_report_change_bn")
+    change = ("" if four is None else
+              f'<span class="big-sub {CASH_TONE.get(str(direction), "neu")}">{_bn(four, signed=True)} in 4 weeks</span>')
+    word = CASH_WORDS.get(str(direction), "direction unknown")
+    week = cash.get("week_change_bn")
+    facts = [f'Treasury\'s cash at the Fed averaged <b>{_bn(cash["balance_bn"])}</b> in the week to '
+             f'{_date(cash["date"], weekday=True)}'
+             + ("" if week is None else f', {_bn(week, signed=True)} on the week') + "."]
+    facts += cash_plan_lines(cash)
+    plan = cash.get("plan") or {}
+    target_bn = (plan.get("target") or {}).get("cash_balance_bn")
+    history = [h["value"] for h in cash.get("history") or []]
+    spark = sparkline(history, baseline=target_bn,
+                      label="Treasury cash balance, weekly" + ("" if target_bn is None else
+                                                               f"; dashed line is Treasury's {_bn(target_bn)} target"))
+    sources = sorted({u for part in (plan.get("target"), plan.get("peak"), plan.get("following")) if part
+                      for u in part.get("sources") or []})
+    links = "".join(f' <a href="{escape(u)}">Treasury {i}</a>' for i, u in enumerate(sources, 1))
+    return f'''<section class="ov-block card" id="g-cash">
+<div class="cap-row"><span class="cap cyan">Treasury cash (TGA)</span><span class="cap-meta">weekly, H.4.1</span></div>
+<p class="big-row"><span class="big">{_bn(cash["balance_bn"])}</span>{change}</p>
+<p class="ov-read">{escape(word.capitalize())}.</p>
+<p class="small">TGA up = cash leaving banks (liquidity drain). TGA down = Treasury spending it back out (liquidity injection).</p>
+{spark}
+<ul class="g-facts">{"".join(f"<li>{p}</li>" for p in facts)}</ul>
+{you_html(cash_you(cash))}
+<p class="small">Sources: FRED WTREGEN (Federal Reserve H.4.1);{links or " no Treasury plan loaded"}. Treasury's plan is its own assumption and is revised every quarter.</p>
+</section>'''
+
+
 def overview(view: dict[str, Any]) -> str:
-    return "".join((_instrument(view), _ten_year(view), _drivers(view), _positioning(view), _supply(view)))
+    return "".join((_instrument(view), _cash(view), _ten_year(view), _drivers(view), _positioning(view),
+                    _supply(view)))

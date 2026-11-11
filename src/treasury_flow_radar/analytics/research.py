@@ -27,6 +27,7 @@ from treasury_flow_radar.analytics.market_context import market_context
 from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
 from treasury_flow_radar.analytics.positioning_moves import unusual_dealer_moves
 from treasury_flow_radar.analytics.temporal import align_observation
+from treasury_flow_radar.analytics.treasury_cash import treasury_cash
 from treasury_flow_radar.sources.fred_releases import (
     EXCLUDED_RELEASE_IDS,
     MAX_RELEASE_DATES_PER_YEAR,
@@ -82,6 +83,7 @@ def build_research_report(
     deals: list[dict[str, Any]] | None = None,
     fomc_decisions: list[dict[str, Any]] | None = None,
     history_rows: Iterable[Mapping[str, Any]] | None = None,
+    cash_guidance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-ready report from normalized observation rows.
 
@@ -93,6 +95,10 @@ def build_research_report(
     measurement of attribution priors (10-year changes on event and ordinary days over the
     span every event calendar covers). Every other section uses ``rows``. When omitted,
     both use ``rows`` too.
+
+    ``cash_guidance`` is Treasury's published cash-balance plan (see
+    :func:`treasury_flow_radar.events.load_cash_guidance`); the Treasury cash read compares the
+    stored TGA balance with it. Without it the read still reports the balance and its direction.
     """
     if start_date > end_date:
         raise ValueError("start_date must not be after end_date")
@@ -523,6 +529,7 @@ def build_research_report(
         "positioning_moves": positioning_flags,
         "basis_setup": basis,
         "plumbing_synthesis": synthesize(basis),
+        "treasury_cash": treasury_cash(source_rows if history is None else history, cash_guidance),
         "treasury_auctions": auctions,
         "event_study_windows": ["T-5 through T+5", "T-3 through T+3", "T-1 through T+1"],
         "market_confirmation": market_summary,
