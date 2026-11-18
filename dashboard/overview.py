@@ -28,6 +28,7 @@ from dashboard.for_you import (
     supply_you,
     you_html,
 )
+from treasury_flow_radar.analytics.basis_crowding import crowding_percentile
 from treasury_flow_radar.analytics.plumbing_synthesis import funding_thinning
 
 MINUS = "−"
@@ -125,7 +126,8 @@ def _m(value: float) -> str:
 
 def crowding_context(agg: dict[str, Any], crowded: bool) -> tuple[str, list[str], str]:
     """Verdict, context lines and the practical reading for the leveraged-fund short."""
-    pct = agg.get("short_percentile")
+    pct = crowding_percentile(agg)
+    by_share = agg.get("crowding_measure") == "share_of_open_interest"
     size = abs(agg["net_10y_equivalents"])
     verdict = ("—" if pct is None else "crowded" if crowded else "large" if pct >= 70 else
                "typical" if pct >= 40 else "small")
@@ -137,7 +139,21 @@ def crowding_context(agg: dict[str, Any], crowded: bool) -> tuple[str, list[str]
             f", {_m(size - line)} over the crowded line" if size >= line else
             f", {_m(line - size)} ({(line - size) / line * 100:.0f}%) under the crowded line")
         start = date.fromisoformat(agg["history_start"]).year
-        points.append(f'By the long record: larger than {pct:.0f}% of the {agg["history_weeks"]} weeks since {start}{gap}.')
+        if by_share:
+            share_line = agg.get("crowded_threshold_share_percent")
+            line_note = "" if share_line is None else f" (line {share_line:.1f}%)"
+            points.append(f'By share of the market: <b>{agg["share_of_open_interest_percent"]:.1f}%</b> of open '
+                          f'interest{line_note}, larger than {pct:.0f}% of the {agg["history_weeks"]} weeks '
+                          f'since {start}{gap} at this week\'s open interest.')
+            raw = agg.get("short_percentile")
+            growth = agg.get("open_interest_growth_multiple")
+            if raw is not None:
+                points.append(f'By raw size: larger than {raw:.0f}% of those weeks'
+                              + (f', but open interest is {growth:.1f}× its {start} level, so raw size '
+                                 'overstates crowding.' if growth and growth >= 1.5 else '.'))
+        else:
+            points.append(f'By the long record: larger than {pct:.0f}% of the {agg["history_weeks"]} weeks '
+                          f'since {start}{gap}.')
     history = [abs(h["value"]) for h in agg.get("history") or [] if h.get("value") is not None and h["value"] < 0]
     recent = history[-52:]
     if len(recent) >= 26:
@@ -231,7 +247,7 @@ def _instrument(view: dict[str, Any]) -> str:
     tone = str(syn.get("tone") or "unknown")
     word = {"quiet": "Quiet", "watch": "Watch", "strain": "Strain", "partial": "Partial"}.get(tone, "Unread")
 
-    pct = None if agg is None else agg.get("short_percentile")
+    pct = crowding_percentile(agg)
     c_verdict, c_points, c_so = (("—", ["Not enough stored weeks to rank the position."], "")
                                  if agg is None else crowding_context(agg, bool(state.get("crowded"))))
     crowd = _gauge(

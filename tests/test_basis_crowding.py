@@ -285,3 +285,77 @@ def test_state_label_matches_percentile_band():
     assert label(50) == "Leveraged-fund short in its typical range"
     assert label(10) == "Leveraged-fund short smaller than in most weeks"
     assert _state({"short_percentile": 79}, None, None)["code"] == "NOT_CROWDED"
+
+
+# ------------------------------------------------------------------ crowding measured against market size
+
+def _growing_market(weeks: int, final_share: float) -> list[dict]:
+    """Open interest grows 2%/week; the short is a steady 20% of it, then ``final_share`` in the last week."""
+    start = date(2025, 1, 7)
+    rows: list[dict] = []
+    for i in range(weeks):
+        day = start + timedelta(weeks=i)
+        oi = 1_000_000.0 * 1.02 ** i
+        share = final_share if i == weeks - 1 else 0.20 + 0.0001 * (i % 7)
+        for series in CONTRACTS:
+            rows += _cftc_rows(series, day, 0.0, share * oi, oi)
+        for sid, tenor in (("DGS2", 2.0), ("DGS5", 5.0), ("DGS7", 7.0), ("DGS10", 10.0), ("DGS30", 30.0)):
+            rows.append(_daily(sid, day, CURVE[tenor]))
+    return rows
+
+
+def test_a_short_that_only_grows_with_the_market_is_not_crowded():
+    # Raw size sets a record every week because open interest grows, but the short's share of
+    # the market is ordinary, so the crowded line (share of open interest) is not crossed.
+    setup = basis_setup(_growing_market(60, 0.2003))
+    agg = setup["crowding"]["aggregate"]
+    assert agg["short_percentile"] == 100.0 and agg["record_short"]
+    assert agg["crowding_measure"] == "share_of_open_interest"
+    assert agg["crowding_percentile"] == agg["share_percentile"] < 80
+    assert agg["open_interest_growth_multiple"] == pytest.approx(1.02 ** 59, rel=1e-6)
+    assert setup["state"]["crowded"] is False
+    assert "share of 10y-equivalent open interest" in setup["state"]["rules"]["crowded"]
+
+
+def test_a_short_that_outgrows_the_market_is_crowded_and_its_line_is_sized_at_todays_open_interest():
+    setup = basis_setup(_growing_market(60, 0.30))
+    agg = setup["crowding"]["aggregate"]
+    assert agg["crowding_percentile"] == 100.0 and setup["state"]["crowded"] is True
+    line_share = agg["crowded_threshold_share_percent"]
+    assert 20.0 <= line_share < 20.1
+    # The line in 10-year equivalents is that share of this week's open interest, not a past raw size.
+    assert agg["crowded_threshold_10y_equivalents"] == pytest.approx(
+        line_share / 100 * agg["open_interest_10y_equivalents"])
+    assert agg["size_threshold_10y_equivalents"] < agg["crowded_threshold_10y_equivalents"]
+
+
+def test_crowding_falls_back_to_raw_size_without_open_interest_history():
+    rows = [r for r in _history(60, 500_000.0) if r["metadata"].get("metric") != "open_interest"]
+    agg = basis_setup(rows)["crowding"]["aggregate"]
+    assert agg["crowding_measure"] == "net_short_size"
+    assert agg["crowding_percentile"] == agg["short_percentile"] == 100.0
+    assert agg["share_percentile"] is None
+
+
+def test_synthesis_and_watch_speak_in_share_of_open_interest():
+    from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
+    basis = basis_setup(_growing_market(60, 0.2003))
+    syn = synthesize(basis)
+    assert "of open interest" in syn["lines"][0]["text"] and "by share of the market" in syn["lines"][0]["text"]
+    assert any("% of open interest" in w and "at this week's open interest" in w for w in syn["watch"])
+
+
+def test_tight_funding_with_a_large_uncrowded_short_does_not_call_it_small():
+    from treasury_flow_radar.analytics.plumbing_synthesis import synthesize
+    basis = {
+        "crowding": {"aggregate": {"net_10y_equivalents": -5.4e6, "crowding_percentile": 70.7,
+                                   "crowding_measure": "share_of_open_interest",
+                                   "share_of_open_interest_percent": 26.4, "history_weeks": 556}},
+        "funding": {"date": "2026-11-16", "sofr_minus_iorb_median_bps": 1.0, "sessions_above_iorb_streak": 1},
+        "volatility": {"realized_vol_bps_per_day": 6.4, "realized_vol_percentile": 77.7, "sessions": 20},
+        "state": {"crowded": False, "funding_tight": True, "vol_elevated": False},
+    }
+    syn = synthesize(basis)
+    assert syn["headline"] == "Plumbing is mostly quiet, but funding is tight."
+    assert "not large" not in syn["lines"][-1]["text"]
+    assert "large but below the crowded line" in syn["lines"][-1]["text"]

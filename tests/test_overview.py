@@ -185,3 +185,28 @@ def test_page_links_home_screen_icon_and_export_ships_it(tmp_path):
     sw = (tmp_path / "sw.js").read_text(encoding="utf-8")
     assert "respondWith(fetch(event.request))" in sw and "caches." not in sw   # pass-through: no Cache API use, never stale
     assert "serviceWorker.register('sw.js')" in html
+
+
+def test_crowding_context_reads_share_of_market_and_flags_raw_size_drift():
+    from dashboard.overview import crowding_context
+
+    agg = {"crowding_measure": "share_of_open_interest", "crowding_percentile": 70.7, "short_percentile": 80.9,
+           "share_of_open_interest_percent": 26.4, "crowded_threshold_share_percent": 28.8,
+           "open_interest_growth_multiple": 3.25, "net_10y_equivalents": -5.43e6, "history_weeks": 556,
+           "history_start": "2016-03-08", "crowded_threshold_10y_equivalents": 5.92e6,
+           "peak_short_10y_equivalents": 7.26e6, "net_dv01_usd_per_bp": -3.19e8, "history": []}
+    verdict, points, _ = crowding_context(agg, crowded=False)
+    assert verdict == "large"
+    assert "<b>26.4%</b> of open interest (line 28.8%), larger than 71% of the 556 weeks since 2016" in points[1]
+    assert "0.49M (8%) under the crowded line at this week's open interest" in points[1]
+    assert "By raw size: larger than 81% of those weeks, but open interest is 3.2× its 2016 level" in points[2]
+
+
+def test_overview_gauge_uses_the_share_percentile_not_raw_size():
+    view = _view()
+    view["basis"]["crowding"]["aggregate"].update(
+        {"crowding_measure": "share_of_open_interest", "crowding_percentile": 70.7, "short_percentile": 80.9,
+         "share_of_open_interest_percent": 26.4, "crowded_threshold_share_percent": 28.8,
+         "open_interest_growth_multiple": 3.25})
+    html = overview(view)
+    assert "71st pct" in html and "81st pct" not in html.split('id="g-funding"')[0].split("By raw size")[0]

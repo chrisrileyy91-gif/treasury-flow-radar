@@ -578,7 +578,8 @@ def _basis(view: dict[str, Any]) -> str:
         figure = '<span class="unknown">Aggregate unavailable: needs all five contracts and the yield curve on the same report date.</span>'
     else:
         pct = agg.get("short_percentile")
-        size = (f"a larger short than {pct:.0f}%" if pct >= 50 else f"a smaller short than {100 - pct:.0f}%")
+        size = ("" if pct is None else
+                f"a larger short than {pct:.0f}%" if pct >= 50 else f"a smaller short than {100 - pct:.0f}%")
         rank = (f'{_ord(pct)} percentile of {agg["history_weeks"]} stored weeks since {_day(agg["history_start"])} '
                 f'({size} of them)'
                 if pct is not None else
@@ -588,7 +589,12 @@ def _basis(view: dict[str, Any]) -> str:
                   f'{_contracts(agg.get("weekly_change_10y_equivalents"))} on the week, as of {_day(agg["report_date"])}. '
                   f'That ranks in the {rank}.{record} '
                   f'Share of open interest: {_num(agg.get("share_of_open_interest_percent"), 1)}% '
-                  f'({_ord(agg.get("share_percentile"))} percentile). {_tag("Estimate")} {_tag("Calculation")}')
+                  f'({_ord(agg.get("share_percentile"))} percentile)'
+                  + (f'; the crowded line uses this share, not raw size, because open interest is '
+                     f'{agg["open_interest_growth_multiple"]:.1f}× its starting level'
+                     if agg.get("crowding_measure") == "share_of_open_interest"
+                     and agg.get("open_interest_growth_multiple") else '')
+                  + f'. {_tag("Estimate")} {_tag("Calculation")}')
     contract_rows = [[c["contract"], _contracts(c["net_contracts"]), _contracts(c["weekly_change_contracts"]),
                       _num(c["net_short_share_of_open_interest_percent"], 1), _ord(c["short_percentile"])]
                      for c in crowding["contracts"]]

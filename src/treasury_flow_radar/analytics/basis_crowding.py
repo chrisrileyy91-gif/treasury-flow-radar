@@ -5,7 +5,11 @@ to force an unwind of the cash-futures basis trade". Three inputs, each a CALCUL
 stored official observations:
 
 1. **Crowding** — CFTC TFF leveraged-fund net futures positions, per contract and summed across
-   contracts in 10-year-note equivalents (DV01-weighted), ranked against their own stored history.
+   contracts in 10-year-note equivalents (DV01-weighted). The crowded line ranks the short as a
+   share of open interest (also DV01-weighted), not its raw size: Treasury futures open interest
+   has grown several-fold since the stored history starts, so a raw-size rank rises with market
+   size alone. Raw size and its rank are still reported. If open interest history is too short,
+   the rule falls back to raw size and says so (``crowding_measure``).
 2. **Funding** — SOFR (and its 99th percentile) minus the Fed's interest rate on reserve
    balances (IORB), same calendar date, in basis points.
 3. **Volatility** — realized volatility of daily 10-year yield changes. This is *not* the ICE
@@ -90,6 +94,8 @@ FUNDING_MEDIAN_SESSIONS = 10    # median damps single-day month- and quarter-end
 REALIZED_VOL_SESSIONS = 20
 CF_COUPON_PERCENT = 6.0
 DV01_METHOD = "ctd_proxy_par_bond_over_cf"
+CROWDING_MEASURE_SHARE = "share_of_open_interest"   # net short / open interest, both in 10y equivalents
+CROWDING_MEASURE_SIZE = "net_short_size"            # fallback when open interest history is too short
 
 
 # ------------------------------------------------------------------ pure calculations
@@ -161,6 +167,19 @@ def contract_dv01(spec: ContractSpec, curve: Mapping[float, float]) -> float | N
 
 def realized_vol(changes_bps: list[float]) -> float | None:
     return pstdev(changes_bps) if len(changes_bps) >= 2 else None
+
+
+def crowding_percentile(aggregate: Mapping[str, Any] | None) -> float | None:
+    """The percentile the crowded line uses: ``crowding_percentile`` when present, else raw size.
+
+    Aggregates built by :func:`_crowding` always carry ``crowding_percentile`` (share of open
+    interest, or raw size as a documented fallback). An aggregate without the key predates that
+    field and was ranked by raw size, so raw size is the faithful reading of it."""
+    if not aggregate:
+        return None
+    if "crowding_percentile" in aggregate:
+        return aggregate["crowding_percentile"]
+    return aggregate.get("short_percentile")
 
 
 # ------------------------------------------------------------------ assembly
@@ -253,6 +272,7 @@ def _crowding(observations: list[Observation], curve_levels: Mapping[str, Mappin
             "net_10y_equivalents": total,
             "net_dv01_usd_per_bp": sum(net[s][day] * dv01[s] for s in CONTRACTS),
             "share_of_open_interest_percent": None if not oi_total else -total / oi_total * 100,
+            "open_interest_10y_equivalents": oi_total,
             "curve_date": curve_day.isoformat() if curve_day else None,
             "contract_dv01_usd_per_bp": {CONTRACTS[s].label: round(v, 2) for s, v in dv01.items()},
         })
@@ -264,21 +284,43 @@ def _crowding(observations: list[Observation], curve_levels: Mapping[str, Mappin
         shares = [r["share_of_open_interest_percent"] for r in aggregate_rows
                   if r["share_of_open_interest_percent"] is not None]
         enough = len(aggregate_rows) >= MIN_HISTORY_WEEKS
+        share_percentile = (percentile_rank(shares, latest["share_of_open_interest_percent"])
+                            if enough and latest["share_of_open_interest_percent"] is not None
+                            and len(shares) >= MIN_HISTORY_WEEKS else None)
+        size_percentile = percentile_rank(shorts, -latest["net_10y_equivalents"]) if enough else None
+        threshold_share = (value_at_percentile(shares, CROWDED_PERCENTILE)
+                           if share_percentile is not None else None)
+        oi_now = latest["open_interest_10y_equivalents"]
+        oi_first = next((r["open_interest_10y_equivalents"] for r in aggregate_rows
+                         if r["open_interest_10y_equivalents"]), None)
+        # Crowding is ranked by share of open interest when it can be: the futures market has grown
+        # since the history starts, so a raw-size rank drifts upward with market size alone.
+        if share_percentile is not None:
+            measure, crowding_pct = CROWDING_MEASURE_SHARE, share_percentile
+            # The short that would sit exactly on the crowded share line at this week's open interest.
+            line_size = threshold_share / 100.0 * oi_now
+        else:
+            measure, crowding_pct = CROWDING_MEASURE_SIZE, size_percentile
+            line_size = value_at_percentile(shorts, CROWDED_PERCENTILE) if enough else None
         aggregate = {
             **latest,
             "weekly_change_10y_equivalents": (None if prior is None
                                               else latest["net_10y_equivalents"] - prior["net_10y_equivalents"]),
-            "short_percentile": percentile_rank(shorts, -latest["net_10y_equivalents"]) if enough else None,
-            "share_percentile": (percentile_rank(shares, latest["share_of_open_interest_percent"])
-                                 if enough and latest["share_of_open_interest_percent"] is not None
-                                 and len(shares) >= MIN_HISTORY_WEEKS else None),
+            "short_percentile": size_percentile,
+            "share_percentile": share_percentile,
+            "crowding_measure": measure,
+            "crowding_percentile": crowding_pct,
+            "crowded_threshold_share_percent": threshold_share,
+            "open_interest_growth_multiple": (None if not oi_first or not oi_now else oi_now / oi_first),
             "record_short": -latest["net_10y_equivalents"] >= max(shorts),
             "peak_short_10y_equivalents": max(shorts),
-            "crowded_threshold_10y_equivalents": (value_at_percentile(shorts, CROWDED_PERCENTILE)
-                                                  if enough else None),
+            "crowded_threshold_10y_equivalents": line_size,
+            "size_threshold_10y_equivalents": value_at_percentile(shorts, CROWDED_PERCENTILE) if enough else None,
             "history_weeks": len(aggregate_rows),
             "history_start": aggregate_rows[0]["report_date"],
             "history": [{"date": r["report_date"], "value": r["net_10y_equivalents"]} for r in aggregate_rows],
+            "share_history": [{"date": r["report_date"], "value": r["share_of_open_interest_percent"]}
+                              for r in aggregate_rows if r["share_of_open_interest_percent"] is not None],
             "dv01_method": DV01_METHOD,
             "evidence_type": "ESTIMATE",
         }
@@ -354,7 +396,7 @@ def _volatility(observations: list[Observation]) -> dict[str, Any] | None:
 
 def _state(aggregate: Mapping[str, Any] | None, funding: Mapping[str, Any] | None,
            vol: Mapping[str, Any] | None) -> dict[str, Any]:
-    pct = None if aggregate is None else aggregate.get("short_percentile")
+    pct = crowding_percentile(aggregate)
     crowded = None if pct is None else pct >= CROWDED_PERCENTILE
     tight = None if funding is None else funding.get("sofr_above_iorb")
     vol_pct = None if vol is None else vol.get("realized_vol_percentile")
@@ -383,8 +425,9 @@ def _state(aggregate: Mapping[str, Any] | None, funding: Mapping[str, Any] | Non
         "vol_elevated": elevated,
         "flag": code == "CROWDED_FUNDING_TIGHT",
         "rules": {
-            "crowded": f"10y-equivalent leveraged-fund net short at or above the {CROWDED_PERCENTILE:.0f}th "
-                       f"percentile of at least {MIN_HISTORY_WEEKS} stored weekly reports",
+            "crowded": f"10y-equivalent leveraged-fund net short as a share of 10y-equivalent open interest at "
+                       f"or above the {CROWDED_PERCENTILE:.0f}th percentile of at least {MIN_HISTORY_WEEKS} stored "
+                       f"weekly reports (raw net short size when open interest history is too short)",
             "funding_tight": f"{FUNDING_MEDIAN_SESSIONS}-session median of SOFR minus IORB above zero",
             "vol_elevated": f"{REALIZED_VOL_SESSIONS}-session realized 10-year volatility at or above the "
                             f"{VOL_ELEVATED_PERCENTILE:.0f}th percentile of at least {MIN_HISTORY_SESSIONS} sessions",

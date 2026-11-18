@@ -17,6 +17,7 @@ from treasury_flow_radar.analytics.basis_crowding import (
     HEAVY_PERCENTILE,
     SMALL_PERCENTILE,
     VOL_ELEVATED_PERCENTILE,
+    crowding_percentile,
 )
 from treasury_flow_radar.analytics.descriptive import EvidenceType
 
@@ -71,7 +72,8 @@ def _line(text: str, kind: EvidenceType | str) -> dict[str, str]:
 def _positioning(agg: Mapping[str, Any] | None) -> dict[str, str] | None:
     if not agg:
         return None
-    pct = agg.get("short_percentile")
+    pct = crowding_percentile(agg)
+    by_share = agg.get("crowding_measure") == "share_of_open_interest"
     net = agg["net_10y_equivalents"]
     size = _millions(abs(net))
     change = agg.get("weekly_change_10y_equivalents")
@@ -97,6 +99,11 @@ def _positioning(agg: Mapping[str, Any] | None) -> dict[str, str] | None:
         where = "smaller than in most of the stored history"
     else:
         where = "in the middle of its stored range"
+    if by_share:
+        return _line(f"Leveraged funds hold a Treasury futures short of {size} 10-year-note equivalents, "
+                     f"{agg['share_of_open_interest_percent']:.0f}% of open interest: {where} "
+                     f"({_ordinal(pct)} percentile of {agg['history_weeks']} weeks by share of the market){week}.",
+                     EvidenceType.CALCULATION)
     return _line(f"Leveraged funds hold a Treasury futures short of {size} 10-year-note equivalents, "
                  f"{where} ({_ordinal(pct)} percentile of {agg['history_weeks']} weeks){week}.",
                  EvidenceType.CALCULATION)
@@ -157,7 +164,14 @@ def _watch(agg: Mapping[str, Any] | None, funding: Mapping[str, Any] | None,
                      if funding.get("sofr99_minus_iorb_bps") is not None else
                      "Whether SOFR stays above IORB.")
     threshold = (agg or {}).get("crowded_threshold_10y_equivalents")
-    if threshold is not None and not state.get("crowded"):
+    share_line = (agg or {}).get("crowded_threshold_share_percent")
+    if threshold is not None and not state.get("crowded") and share_line is not None:
+        items.append(f"The leveraged-fund short growing past {share_line:.1f}% of open interest, the "
+                     f"{_ordinal(CROWDED_PERCENTILE)} percentile of stored weeks: about {_millions(threshold)} "
+                     f"10-year equivalents at this week's open interest "
+                     f"(now {_millions(-agg['net_10y_equivalents'])}, "
+                     f"{agg['share_of_open_interest_percent']:.1f}%).")
+    elif threshold is not None and not state.get("crowded"):
         items.append(f"The leveraged-fund short growing past {_millions(threshold)} 10-year equivalents, "
                      f"the {_ordinal(CROWDED_PERCENTILE)} percentile of stored weeks "
                      f"(now {_millions(-agg['net_10y_equivalents'])}; peak "
@@ -201,10 +215,15 @@ def synthesize(basis: Mapping[str, Any] | None) -> dict[str, Any]:
     elif tight or elevated:
         flashing = " and ".join(x for x, on in (("funding is tight", tight), ("volatility is elevated", elevated)) if on)
         tone, headline = "watch", f"Plumbing is mostly quiet, but {flashing}."
-        stress = ("The position is not large, so funding or volatility stress has less to force out. "
+        heavy = (crowding_percentile(agg) or 0) >= HEAVY_PERCENTILE
+        stress = ("The position is large but below the crowded line for its share of the market, so "
+                  "funding or volatility stress has less to force out than in a crowded week. "
+                  "Nothing here points to forced selling yet."
+                  if heavy else
+                  "The position is not large, so funding or volatility stress has less to force out. "
                   "Nothing here points to forced selling yet.")
     else:
-        heavy = ((agg or {}).get("short_percentile") or 0) >= HEAVY_PERCENTILE
+        heavy = (crowding_percentile(agg) or 0) >= HEAVY_PERCENTILE
         if heavy:
             tone, headline = "quiet", "Treasury plumbing is quiet, but the trade is large."
             stress = ("The position is larger than in most stored weeks, but funding still below the Fed's rate "
